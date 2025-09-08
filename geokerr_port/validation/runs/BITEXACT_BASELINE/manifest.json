@@ -1,0 +1,10 @@
+{
+  "version": "1.0",
+  "run_id": "BITEXACT_BASELINE",
+  "geokerr_commit": "unknown",
+  "port_commit": "unknown",
+  "grid": { "type": "adaptive_lambda", "S": 4096, "delta": 1.000000000000000e-03 },
+  "tolerances": { "atol": 0.000000000000000e+00, "rtol": 0.000000000000000e+00, "max_ulps": 0 },
+  "quant_lsb": 0,
+  "fields": ["u", "mu", "t", "phi", "affine"]
+}

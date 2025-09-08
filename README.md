@@ -6,6 +6,9 @@ NullPath is a CUDA/C++ prototype that integrates photon paths (null geodesics) i
 - Build renderer: `make render-fast`
 - Render a still: `./bin/render --w 1280 --h 720 --samples 4 --out frame.ppm`
 - Kerr preview: `./bin/render --spin 0.9 --w 1920 --h 1080 --samples 4 --spp-total 16 --checkpoint-every 4 --out kerr.ppm`
+- Tone mapping (recommended): `./bin/render --tonemap reinhard --gamma 2.2 --exposure 0.7 --out frame_tm.ppm`
+ - Einstein ring demo (point source at infinity):
+   `./bin/render --bg point --bg-sigma 0.3 --bg-bright 6 --theta 80 --fov 55 --tonemap reinhard --gamma 2.2 --exposure 0.7 --out ring_demo.ppm`
 - Tests: `make quick-test` (honors `BH_NUM_RAYS`)
 - Build app: `make app`
 - Run demo: `./bin/nullpath`
@@ -48,3 +51,17 @@ Notes
 - Deflection storage: `deflection_angles` stores total Δφ; `bending_angles` = Δφ − π for escaped rays (conventional lensing bend).
 - Units: geometric (G=c=1). Rs=2M, so r_ph=1.5 Rs and b_crit=(3√3/2)Rs.
 - Camera frame: static observer outside the ergosphere; consider ZAMO for deep Kerr placements (see TODOs in AGENTS.md).
+
+### Output Mapping Controls
+- `--exposure EV` sets exposure in EV stops (scale = 2^EV). Default `0`.
+- `--gamma G` applies display gamma; default `2.2` (sRGB-like). Use `1.0` to keep linear.
+- `--tonemap {none|reinhard}` enables highlight rolloff before quantization. Default `none`.
+
+### Background Controls
+- `--bg {gradient|point}` selects background. Default `gradient` (sky).
+- `--bg-sigma deg` angular width (degrees) of the point source Gaussian. Typical 0.2–1.0.
+- `--bg-bright x` peak brightness scale of the point source (before tone mapping). Typical 3–10.
+
+### Disk Controls
+- `--disk-max-orders N` accumulate up to N equatorial crossings (N=1 shows only the direct image; N=2/3 reveals higher‑order arcs).
+- `--disk-gain x` scales disk brightness; `--no-disk` disables disk shading entirely.

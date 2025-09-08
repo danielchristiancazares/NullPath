@@ -1,0 +1,10 @@
+{
+  "version": "1.0",
+  "run_id": "CARLSON_TEST_RELAXED",
+  "geokerr_commit": "unknown",
+  "port_commit": "unknown",
+  "grid": { "type": "adaptive_lambda", "S": 4096, "delta": 1.000000000000000e-03 },
+  "tolerances": { "atol": 1.000000000000000e-03, "rtol": 1.000000000000000e-03, "max_ulps": 100 },
+  "quant_lsb": 8,
+  "fields": ["u", "mu", "t", "phi", "affine"]
+}

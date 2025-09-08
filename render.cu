@@ -31,6 +31,18 @@ struct RenderParams {
     int checkpoint_every = 0; // checkpoint every K passes (0 => final only)
     int check_invariants = 0; // 1 = track Hamiltonian/E/Lz drift and report
     const char* mode = "balanced"; // fast|balanced|accurate
+    // Output mapping controls
+    float exposure_ev = 0.0f;   // exposure in EV stops (scale = 2^EV)
+    float gamma = 2.2f;         // display gamma (1.0 = linear)
+    const char* tonemap = "none"; // none|reinhard
+    // Background controls
+    const char* bg = "gradient"; // gradient|point
+    float bg_sigma_deg = 1.0f;   // Gaussian width (deg) for point source
+    float bg_brightness = 3.0f;  // peak brightness for point source
+    // Disk emission controls
+    int disk_on = 1;             // 1=render thin disk, 0=disable
+    float disk_gain = 1.0f;      // brightness multiplier for disk emission
+    int disk_max_orders = 1;     // number of disk intersections to accumulate (1 = direct only)
 };
 
 #ifndef BH_FP64_GEODESIC
@@ -41,6 +53,13 @@ __device__ __host__ inline float3 make_float3_clamped(float x, float y, float z)
     return make_float3(fminf(fmaxf(x, 0.f), 1.f), fminf(fmaxf(y, 0.f), 1.f), fminf(fmaxf(z, 0.f), 1.f));
 }
 
+__device__ inline float wrap_pi(float x) {
+    float twopi = 2.0f * BH_PI;
+    x = fmodf(x + BH_PI, twopi);
+    if (x < 0.0f) x += twopi;
+    return x - BH_PI;
+}
+
 // (Kerr metric, camera init, and Doppler are provided by headers)
 
 __device__ inline float3 shade_disk(float r, float Rs, float g) {
@@ -48,7 +67,8 @@ __device__ inline float3 shade_disk(float r, float Rs, float g) {
     float j = powf(fmaxf(r, 1.0f), -2.0f);
     float I = j * g * g * g;
     float3 base = make_float3(1.0f, 0.75f, 0.45f);
-    return make_float3_clamped(base.x * I, base.y * I, base.z * I);
+    // Return unclamped radiance; tone mapping and clamp later
+    return make_float3(base.x * I, base.y * I, base.z * I);
 }
 
 __device__ inline float3 shade_background(float u, float v) {
@@ -98,6 +118,9 @@ __device__ inline void atomicMaxFloat(float* addr, float val) {
 __global__ void renderKernel(int width, int height, int y0, int tile_h, int spp,
                              float mass, float spin_a_over_M, float r_cam_Rs, float theta_cam, float phi_cam,
                              float fov_y_deg, int check_inv, int integrator_mode, int camera_mode,
+                             float exposure_scale, float gamma_val, int tonemap_mode,
+                             int bg_mode, float bg_sigma_rad, float bg_peak,
+                             int disk_on, float disk_gain, int disk_max_orders,
                              float* inv_max3, uchar3* out_tile) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int tileN = width * tile_h;
@@ -126,7 +149,7 @@ __global__ void renderKernel(int width, int height, int y0, int tile_h, int spp,
         float ndc_y = ((y + 0.5f + jy) / (float)height) * 2.0f - 1.0f;
         float cam_x = ndc_x * aspect * tan_half;
         float cam_y = -ndc_y * tan_half;
-        float cam_z = -1.0f;
+        float cam_z = -1.0f; // forward points toward -r in back-tracing (we integrate with negative step)
         float norm = rsqrtf(cam_x*cam_x + cam_y*cam_y + cam_z*cam_z);
         cam_x *= norm; cam_y *= norm; cam_z *= norm;
 
@@ -149,13 +172,14 @@ __global__ void renderKernel(int width, int height, int y0, int tile_h, int spp,
         double pphi0 = state.pphi;
         double min_r = state.r;
         bool captured = false;
-        bool disk_hit = false;
-        double hit_r = 0.0;
+        int orders = 0;
+        float3 disk_rgb = make_float3(0,0,0);
         double prev_theta = state.theta;
         GeodesicStateD prev_state = state;
         const double rin = 3.0 * (double)Rs;
         const double rout = 20.0 * (double)Rs;
-        float g_boost = 1.0f;
+        
+        double r_far = (double)r_cam + 10.0 * (double)Rs; // travel well past camera radius
         for (int step = 0; step < MAX_INTEGRATION_STEPS; ++step) {
             double scale = fmin(fmax(1.0, state.r / (0.5 * (double)Rs)), 100.0);
             bool ok = false;
@@ -173,11 +197,11 @@ __global__ void renderKernel(int width, int height, int y0, int tile_h, int spp,
             min_r = fmin(min_r, state.r);
             double d_prev = prev_state.theta - (double)BH_PI_D*0.5;
             double d_curr = state.theta - (double)BH_PI_D*0.5;
-            if (!disk_hit) {
+            {
                 double eps = 1e-8;
                 bool sign_change = (d_prev > 0 && d_curr < 0) || (d_prev < 0 && d_curr > 0);
                 bool near_zero_transition = (fabs(d_prev) < eps && fabs(d_curr) >= eps) || (fabs(d_curr) < eps && fabs(d_prev) >= eps);
-                if (sign_change || near_zero_transition) {
+                if ((sign_change || near_zero_transition) && orders < disk_max_orders) {
                     double denom = fabs(d_prev) + fabs(d_curr) + 1e-30;
                     double alpha = fabs(d_prev) / denom;
                     double r_cross = prev_state.r + alpha * (state.r - prev_state.r);
@@ -187,11 +211,13 @@ __global__ void renderKernel(int width, int height, int y0, int tile_h, int spp,
                         cross.theta = (double)BH_PI_D*0.5;
                         cross.pt = prev_state.pt + alpha * (state.pt - prev_state.pt);
                         cross.pphi = prev_state.pphi + alpha * (state.pphi - prev_state.pphi);
-                        disk_hit = true;
-                        hit_r = r_cross;
-                        g_boost = (float)doppler_g_general_d(cross, (double)M, (double)a);
+                        float g_boost = (float)doppler_g_general_d(cross, (double)M, (double)a);
+                        float3 c = shade_disk((float)r_cross, Rs, g_boost);
+                        disk_rgb.x += c.x * disk_gain;
+                        disk_rgb.y += c.y * disk_gain;
+                        disk_rgb.z += c.z * disk_gain;
+                        orders++;
                         if (check_inv) {
-                            // Recompute H in double
                             double gtt, gtphi, gphiphi, grr, gthth;
                             kerr_blocks_contra_d((double)M, (double)a, cross.r, cross.theta, gtt, gtphi, gphiphi, grr, gthth);
                             double Hc = 0.5*(gtt*cross.pt*cross.pt + 2.0*gtphi*cross.pt*cross.pphi + gphiphi*cross.pphi*cross.pphi
@@ -208,7 +234,7 @@ __global__ void renderKernel(int width, int height, int y0, int tile_h, int spp,
             }
             prev_theta = state.theta;
             prev_state = state;
-            if (state.r > 999.0 && state.pr > 0) { break; }
+            if (state.r > r_far && step > 10) { break; }
         }
         #else
         GeodesicState state = init_ray_from_camera_general(M, a, r_cam, theta_cam, phi_cam, n_r, n_theta, n_phi);
@@ -216,13 +242,14 @@ __global__ void renderKernel(int width, int height, int y0, int tile_h, int spp,
         float pphi0 = state.pphi;
         float min_r = state.r;
         bool captured = false;
-        bool disk_hit = false;
-        float hit_r = 0.0f;
+        int orders = 0;
+        float3 disk_rgb = make_float3(0,0,0);
         float prev_theta = state.theta;
         GeodesicState prev_state = state;
         const float rin = 3.0f * Rs;
         const float rout = 20.0f * Rs;
-        float g_boost = 1.0f;
+        
+        float r_far = r_cam + 10.0f * Rs; // travel well past camera radius
         for (int step = 0; step < MAX_INTEGRATION_STEPS; ++step) {
             bool ok = false;
             float scale = fminf(100.0f, fmaxf(1.0f, state.r / (0.5f * Rs)));
@@ -232,11 +259,11 @@ __global__ void renderKernel(int width, int height, int y0, int tile_h, int spp,
             min_r = fminf(min_r, state.r);
             float d_prev = prev_state.theta - BH_PI*0.5f;
             float d_curr = state.theta - BH_PI*0.5f;
-            if (!disk_hit) {
+            {
                 float eps = 1e-4f;
                 bool sign_change = (d_prev > 0 && d_curr < 0) || (d_prev < 0 && d_curr > 0);
                 bool near_zero_transition = (fabsf(d_prev) < eps && fabsf(d_curr) >= eps) || (fabsf(d_curr) < eps && fabsf(d_prev) >= eps);
-                if (sign_change || near_zero_transition) {
+                if ((sign_change || near_zero_transition) && orders < disk_max_orders) {
                     float denom = fabsf(d_prev) + fabsf(d_curr) + 1e-20f;
                     float alpha = fabsf(d_prev) / denom;
                     float r_cross = prev_state.r + alpha * (state.r - prev_state.r);
@@ -245,8 +272,12 @@ __global__ void renderKernel(int width, int height, int y0, int tile_h, int spp,
                         cross.r = r_cross; cross.theta = PI_F*0.5f;
                         cross.pt = prev_state.pt + alpha * (state.pt - prev_state.pt);
                         cross.pphi = prev_state.pphi + alpha * (state.pphi - prev_state.pphi);
-                        disk_hit = true; hit_r = r_cross;
-                        g_boost = doppler_g_general(cross, M, a);
+                        float g_boost = doppler_g_general(cross, M, a);
+                        float3 c = shade_disk((float)r_cross, Rs, g_boost);
+                        disk_rgb.x += c.x * disk_gain;
+                        disk_rgb.y += c.y * disk_gain;
+                        disk_rgb.z += c.z * disk_gain;
+                        orders++;
                         if (check_inv) {
                             float Hc = (a == 0.0f) ? hamiltonian_schwarzschild(cross, Rs) : hamiltonian_kerr(cross, M, a);
                             float Habs = fabsf(Hc);
@@ -261,15 +292,24 @@ __global__ void renderKernel(int width, int height, int y0, int tile_h, int spp,
             }
             prev_theta = state.theta;
             prev_state = state;
-            if (state.r > 999.0f && state.pr > 0) { break; }
+            if (state.r > r_far && step > 10) { break; }
         }
         #endif
 
         float3 color;
         if (captured) {
-            color = make_float3(0,0,0);
-        } else if (disk_hit) {
-            color = shade_disk((float)hit_r, Rs, g_boost);
+            if (bg_mode == 1) {
+                float r_ph = 1.5f * Rs;
+                float width = fmaxf(0.02f * Rs, 0.005f * Rs + 0.02f * bg_sigma_rad * Rs);
+                float dr = ((float)min_r - r_ph);
+                float w = expf(-0.5f * (dr / width) * (dr / width));
+                float I = bg_peak * w + 0.0f; // captured baseline = 0
+                color = make_float3(I, I, I);
+            } else {
+                color = make_float3(0,0,0);
+            }
+        } else if (orders > 0 && disk_on) {
+            color = disk_rgb;
         } else {
             if (check_inv) {
                 #if BH_FP64_GEODESIC
@@ -290,15 +330,41 @@ __global__ void renderKernel(int width, int height, int y0, int tile_h, int spp,
                 atomicMaxFloat(&inv_max3[1], Erel);
                 atomicMaxFloat(&inv_max3[2], Lrel);
             }
-            float u = (cam_x * 0.5f + 0.5f);
-            float v = (cam_y * 0.5f + 0.5f);
-            color = shade_background(u, v);
+            if (bg_mode == 1) {
+                // Practical Einstein-ring demo: brighten pixels whose geodesics skim the photon sphere
+                float r_ph = 1.5f * Rs;
+                float width = fmaxf(0.02f * Rs, 0.005f * Rs + 0.02f * bg_sigma_rad * Rs); // empirical width
+                float dr = ((float)min_r - r_ph);
+                float w = expf(-0.5f * (dr / width) * (dr / width));
+                float I = bg_peak * w + 0.02f;
+                color = make_float3(I, I, I);
+            } else {
+                float u = (cam_x * 0.5f + 0.5f);
+                float v = (cam_y * 0.5f + 0.5f);
+                color = shade_background(u, v);
+            }
         }
 
         accum.x += color.x; accum.y += color.y; accum.z += color.z;
     }
     float inv = 1.0f / (float)spp;
     float3 color = make_float3(accum.x * inv, accum.y * inv, accum.z * inv);
+    // Apply exposure (scale = 2^EV)
+    color.x *= exposure_scale; color.y *= exposure_scale; color.z *= exposure_scale;
+    // Optional tonemapping (1 = Reinhard)
+    if (tonemap_mode == 1) {
+        color.x = color.x / (1.0f + color.x);
+        color.y = color.y / (1.0f + color.y);
+        color.z = color.z / (1.0f + color.z);
+    }
+    // Gamma encode from linear
+    if (fabsf(gamma_val - 1.0f) > 1e-6f) {
+        float inv_g = 1.0f / fmaxf(1e-6f, gamma_val);
+        color.x = powf(fmaxf(color.x, 0.0f), inv_g);
+        color.y = powf(fmaxf(color.y, 0.0f), inv_g);
+        color.z = powf(fmaxf(color.z, 0.0f), inv_g);
+    }
+    color = make_float3_clamped(color.x, color.y, color.z);
     out_tile[idx] = make_uchar3((unsigned char)(255.0f * color.x),
                                 (unsigned char)(255.0f * color.y),
                                 (unsigned char)(255.0f * color.z));
@@ -337,6 +403,15 @@ static void parse_args(int argc, char** argv, RenderParams& p) {
         else if (a == "--phi0") nextf(p.phi0_deg);
         else if (a == "--outpat") nexts(p.out_pat);
         else if (a == "--mode" && i+1 < argc) p.mode = argv[++i];
+        else if (a == "--exposure") nextf(p.exposure_ev);
+        else if (a == "--gamma") nextf(p.gamma);
+        else if (a == "--tonemap" && i+1 < argc) p.tonemap = argv[++i];
+        else if (a == "--bg" && i+1 < argc) p.bg = argv[++i];
+        else if (a == "--bg-sigma") nextf(p.bg_sigma_deg);
+        else if (a == "--bg-bright") nextf(p.bg_brightness);
+        else if (a == "--no-disk") p.disk_on = 0;
+        else if (a == "--disk-gain") nextf(p.disk_gain);
+        else if (a == "--disk-max-orders") nexti(p.disk_max_orders);
     }
 }
 
@@ -385,6 +460,21 @@ int main(int argc, char** argv) {
     else if (mode == "fast") { integrator_mode_host = 0; camera_mode_host = 0; }
     else { integrator_mode_host = 0; camera_mode_host = 0; }
 
+    // Tone mapping / gamma / exposure parameters
+    std::string tonemap_s = tolower_str(params.tonemap ? std::string(params.tonemap) : std::string("none"));
+    int tonemap_mode_host = (tonemap_s == "reinhard") ? 1 : 0;
+    float exposure_scale_host = powf(2.0f, params.exposure_ev);
+    float gamma_host = (params.gamma <= 0.0f ? 1.0f : params.gamma);
+
+    // Background mode
+    std::string bg_s = tolower_str(params.bg ? std::string(params.bg) : std::string("gradient"));
+    int bg_mode_host = (bg_s == "point") ? 1 : 0; // 0=gradient,1=point-source
+    float bg_sigma_rad_host = params.bg_sigma_deg * PI_F / 180.0f;
+    float bg_peak_host = params.bg_brightness;
+    int disk_on_host = params.disk_on ? 1 : 0;
+    float disk_gain_host = params.disk_gain;
+    int disk_max_orders_host = std::max(1, params.disk_max_orders);
+
     auto render_one = [&](float phi_cam, const char* path) -> bool {
         int total_spp = (params.spp_total > 0 ? params.spp_total : params.samples);
         int batch = std::max(1, params.samples);
@@ -410,6 +500,9 @@ int main(int argc, char** argv) {
                     renderKernel<<<grid, block, 0, stream[buf]>>>(params.width, params.height, y0, tile_h, pass_spp,
                                                                  params.mass, params.spin, params.r_cam, theta_cam, phi_cam,
                                                                  params.fov_y_deg, params.check_invariants, integrator_mode, camera_mode,
+                                                                 exposure_scale_host, gamma_host, tonemap_mode_host,
+                                                                 bg_mode_host, bg_sigma_rad_host, bg_peak_host,
+                                                                 disk_on_host, disk_gain_host, disk_max_orders_host,
                                                                  d_inv[buf], d_tile[buf]);
                     cudaMemcpyAsync(h_tile[buf], d_tile[buf], thisN * sizeof(uchar3), cudaMemcpyDeviceToHost, stream[buf]);
                 }
