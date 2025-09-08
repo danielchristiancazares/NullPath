@@ -1,0 +1,48 @@
+# Build artifacts
+bin/
+build/
+*.o
+*.obj
+*.ptx
+*.cubin
+*.linkinfo
+*.dSYM/
+*.a
+*.so
+*.dll
+*.lib
+*.exp
+*.pdb
+
+# Render outputs and media
+*.ppm
+*.png
+*.jpg
+*.jpeg
+*.mp4
+render.ppm
+render_*.ppm
+kerr_*.ppm
+
+# Profiles and logs
+profile*
+*.qdrep
+*.nsys-rep
+*.nvvp
+*.log
+
+# IDE/editor
+.vscode/
+.idea/
+*.swp
+*~
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Internal (do not publish)
+AGENTS.md
