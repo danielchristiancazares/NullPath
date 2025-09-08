@@ -75,6 +75,24 @@ void computeGeodesicDerivatives(const GeodesicState& state, const SchwarzschildM
     derivatives.pphi = 0.0f;
 }
 
+// Analytic turning radius r_min(b) for Schwarzschild equatorial photons
+// Solves r^3 - b^2 r + b^2 Rs = 0 using trigonometric closed form.
+// Returns true and sets rmin when b > b_crit; returns false if no turning point (b <= b_crit).
+__device__ __host__ inline bool schwarzschild_rmin_analytic(float Rs, float b, float* rmin_out) {
+    if (Rs <= 0.0f || b <= 0.0f || rmin_out == nullptr) return false;
+    const double beta = (double)b / (double)Rs; // dimensionless b/Rs
+    const double beta_crit = 0.5 * 3.0 * sqrt(3.0); // (3√3/2)
+    if (beta <= beta_crit) return false; // no turning point outside horizon
+    const double p = -beta * beta;
+    const double A = 2.0 * sqrt(-p / 3.0);         // = 2 beta / sqrt(3)
+    double cosarg = -(3.0 * sqrt(3.0)) / (2.0 * beta); // = -beta_crit/beta ∈ [-1, 0)
+    if (cosarg < -1.0) cosarg = -1.0; if (cosarg > 1.0) cosarg = 1.0;
+    const double ang = (1.0 / 3.0) * acos(cosarg);
+    const double u = A * cos(ang); // largest real root in u = r/Rs
+    *rmin_out = (float)(u * (double)Rs);
+    return isfinite(*rmin_out) && *rmin_out > Rs;
+}
+
 // 4th order Runge-Kutta integration for geodesics
 __device__
 bool integrateGeodesic(GeodesicState& state, const SchwarzschildMetric& metric, 
@@ -218,22 +236,11 @@ void precomputeGeodesicsKernel(float mass, float* impact_parameters,
     // Store results (with turning-point refinement for escaped rays)
     deflection_angles[idx] = total_phi_change;
     float rmin_out = min_r;
-    if (escaped && min_r > metric.Rs + 1e-4f) {
-        // For Schwarzschild equatorial photons, turning radius r satisfies:
-        // r^3 - b^2 r + b^2 Rs = 0 (with b = impact parameter).
-        // Do a couple of Newton steps starting from min_r.
-        float r_guess = fmaxf(min_r, metric.Rs + 1e-3f);
-        float b2 = b * b;
-        #pragma unroll 2
-        for (int it = 0; it < 2; ++it) {
-            float f = r_guess*r_guess*r_guess - b2 * r_guess + b2 * metric.Rs;
-            float fp = 3.0f * r_guess * r_guess - b2;
-            if (fabsf(fp) < 1e-8f) break;
-            float step = f / fp;
-            r_guess = fmaxf(metric.Rs + 1e-3f, r_guess - step);
+    if (escaped) {
+        float r_an = 0.0f;
+        if (schwarzschild_rmin_analytic(metric.Rs, b, &r_an)) {
+            rmin_out = r_an; // exact turning radius (GeoKerr convention)
         }
-        // Keep the smaller of integrated min and refined value
-        if (isfinite(r_guess)) rmin_out = fminf(min_r, r_guess);
     }
     closest_approaches[idx] = rmin_out;
     
