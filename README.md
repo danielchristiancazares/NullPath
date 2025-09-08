@@ -7,6 +7,23 @@ NullPath is a CUDA/C++ prototype that integrates photon paths (null geodesics) i
 - Render a still: `./bin/render --w 1280 --h 720 --samples 4 --out frame.ppm`
 - Kerr preview: `./bin/render --spin 0.9 --w 1920 --h 1080 --samples 4 --spp-total 16 --checkpoint-every 4 --out kerr.ppm`
 - Tests: `make quick-test` (honors `BH_NUM_RAYS`)
+ - Build app: `make app`
+ - Run demo: `./bin/nullpath`
+
+Example demo output (varies by GPU):
+```
+NullPath — CUDA null-geodesic tracer (Schwarzschild)
+====================================================
+Using GPU: NVIDIA ...
+CUDA Cores (approx): ~...
+Global Memory: ... GB
+Precomputing 100000 geodesics for black hole mass 10.00...
+Precomputation took 1234 ms
+Results for mass 10.00 solar masses:
+Escaped rays: ... (...%)
+Captured rays: ... (...%)
+Photon sphere: ... (...%)
+```
 
 ## Citations & References (with arXiv IDs where available)
 - Bardeen, Press, Teukolsky (1972), “Rotating Black Holes: Locally Nonrotating Frames, Energy Extraction, and Scalar Synchrotron Radiation,” ApJ 178, 347. Classic LNRF and circular orbits in Kerr. (no arXiv; ADS bibcode 1972ApJ...178..347B)
