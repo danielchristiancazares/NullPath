@@ -42,7 +42,7 @@ int main() {
 
     std::printf("[info] mass=%.3f, rays=%d\n", mass, num_rays);
     const float Rs = SCHWARZSCHILD_MULTIPLIER * mass;
-    const float bcrit_theory = 0.5f * 3.0f * sqrtf(3.0f) * Rs; // (3*sqrt(3)/2) * Rs
+    const float bcrit_theory = bh_bcrit_from_Rs(Rs); // (3*sqrt(3)/2) * Rs
     const float r_ph_theory = PHOTON_SPHERE_MULTIPLIER * Rs;    // 1.5 * Rs
 
     GeodesicLookupTable* table = precomputeGeodesics(mass, num_rays);
@@ -119,7 +119,8 @@ int main() {
     bool ok_b = b_rel_err <= 0.05f;   // 5% tolerance
     bool ok_r = r_rel_err <= 0.03f;   // 3% tolerance
 
-    std::printf("[check] b_crit est=%.6f, theory=%.6f, rel_err=%.3f\n", bcrit_est, bcrit_theory, b_rel_err);
+    std::printf("[check] b_crit est=%.6f (%.6f M), theory=%.6f (%.6f M), rel_err=%.3f\n",
+                bcrit_est, bcrit_est / mass, bcrit_theory, bh_bcrit_from_M(mass), b_rel_err);
     std::printf("[check] r_min@b_crit kernel≈%.6f, cubic(b_est)=%.6f, cubic(b_theory)=%.6f, theory=%.6f, rel_err=%.3f\n",
                 refined_rmin, rmin_pred, rmin_theory_from_bcrit, r_ph_theory, r_rel_err);
 

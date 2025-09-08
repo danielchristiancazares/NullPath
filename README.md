@@ -7,8 +7,8 @@ NullPath is a CUDA/C++ prototype that integrates photon paths (null geodesics) i
 - Render a still: `./bin/render --w 1280 --h 720 --samples 4 --out frame.ppm`
 - Kerr preview: `./bin/render --spin 0.9 --w 1920 --h 1080 --samples 4 --spp-total 16 --checkpoint-every 4 --out kerr.ppm`
 - Tests: `make quick-test` (honors `BH_NUM_RAYS`)
- - Build app: `make app`
- - Run demo: `./bin/nullpath`
+- Build app: `make app`
+- Run demo: `./bin/nullpath`
 
 Example demo output (varies by GPU):
 ```
@@ -24,6 +24,12 @@ Escaped rays: ... (...%)
 Captured rays: ... (...%)
 Photon sphere: ... (...%)
 ```
+
+GeoKerr note
+- Impact parameter conventions sometimes differ. NullPath uses `b = L/E` with lengths in geometric units. For Schwarzschild (mass `M`, Schwarzschild radius `Rs=2M`):
+  - Critical impact parameter: `b_crit = 3√3 M = (3√3/2) Rs`.
+  - Photon sphere: `r_ph = 3M = 1.5 Rs`.
+- When comparing with GeoKerr (which reports in `M` units via `ξ = Lz/E`), divide any length by `M`. The sanity test prints both `b` and `b/M` for cross‑checks.
 
 ## Citations & References (with arXiv IDs where available)
 - Bardeen, Press, Teukolsky (1972), “Rotating Black Holes: Locally Nonrotating Frames, Energy Extraction, and Scalar Synchrotron Radiation,” ApJ 178, 347. Classic LNRF and circular orbits in Kerr. (no arXiv; ADS bibcode 1972ApJ...178..347B)

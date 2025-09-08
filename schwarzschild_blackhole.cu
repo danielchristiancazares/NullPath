@@ -251,6 +251,12 @@ void precomputeGeodesicsKernel(float mass, float* impact_parameters,
 // Host function to precompute geodesic lookup table
 GeodesicLookupTable* precomputeGeodesics(float mass, int num_rays) {
     printf("Precomputing %d geodesics for black hole mass %.2f...\n", num_rays, mass);
+    // Reference values for comparison and GeoKerr alignment
+    const float Rs = SCHWARZSCHILD_MULTIPLIER * mass;
+    const float bcrit_Rs = bh_bcrit_from_Rs(Rs);
+    const float bcrit_M  = bh_bcrit_from_M(mass);
+    printf("[ref] r_ph = %.6f (%.3f Rs), b_crit = %.6f (%.6f M)\n",
+           bh_r_ph(Rs), BH_PHOTON_SPHERE_MULTIPLIER, bcrit_Rs, bcrit_M);
     
     // Allocate host memory
     GeodesicLookupTable* table = new GeodesicLookupTable();
@@ -264,9 +270,15 @@ GeodesicLookupTable* precomputeGeodesics(float mass, int num_rays) {
     std::vector<int> h_ray_status(num_rays);
     
     // Generate impact parameter range
-    float Rs = SCHWARZSCHILD_MULTIPLIER * mass;
-    float b_min = Rs; // Start just outside Schwarzschild radius
-    float b_max = 50.0f * Rs; // Extended range for strong lensing
+    float b_min = 0.30f * bcrit_Rs;   // Focus resolution around the critical region
+    float b_max = 20.0f * bcrit_Rs;   // Still spans far field
+    if (const char* bmin_env = std::getenv("BH_B_MIN_RS")) {
+        float v = strtof(bmin_env, nullptr); if (v > 0.f) b_min = v * Rs;
+    }
+    if (const char* bmax_env = std::getenv("BH_B_MAX_RS")) {
+        float v = strtof(bmax_env, nullptr); if (v > 0.f) b_max = v * Rs;
+    }
+    if (b_min >= b_max) { b_min = Rs; b_max = 50.0f * Rs; }
     
     for (int i = 0; i < num_rays; i++) {
         float t = (float)i / (num_rays - 1);

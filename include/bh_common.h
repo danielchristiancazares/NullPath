@@ -21,6 +21,14 @@ constexpr float BH_EPS_SIN = 1e-12f;
 constexpr float BH_SCHWARZSCHILD_MULTIPLIER = 2.0f;  // Rs = 2M
 constexpr float BH_PHOTON_SPHERE_MULTIPLIER = 1.5f;  // r_ph = 1.5 Rs
 
+// Unit helpers and reference values
+__host__ __device__ inline float bh_r_s(float M) { return BH_SCHWARZSCHILD_MULTIPLIER * M; }
+__host__ __device__ inline float bh_r_ph(float Rs) { return BH_PHOTON_SPHERE_MULTIPLIER * Rs; }
+__host__ __device__ inline float bh_bcrit_from_M(float M) { return 3.0f * sqrtf(3.0f) * M; }
+__host__ __device__ inline float bh_bcrit_from_Rs(float Rs) { return 0.5f * 3.0f * sqrtf(3.0f) * Rs; }
+__host__ __device__ inline float bh_to_M_units(float x, float M) { return x / fmaxf(M, 1e-30f); }
+__host__ __device__ inline float bh_to_Rs_units(float x, float Rs) { return x / fmaxf(Rs, 1e-30f); }
+
 // Integrator defaults (keep in sync with existing sources until migrated)
 constexpr int   BH_MAX_INTEGRATION_STEPS_DEFAULT = 10000;
 constexpr float BH_INTEGRATION_STEP_DEFAULT = 0.01f;
