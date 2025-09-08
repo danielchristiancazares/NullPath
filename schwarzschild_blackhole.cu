@@ -1,6 +1,6 @@
 // schwarzschild_blackhole.cu
 // NullPath — Schwarzschild Null‑Geodesic Tracer (CUDA)
-// Compile: nvcc -O3 -arch=sm_89 schwarzschild_blackhole.cu -o bin/blackhole
+// Compile: nvcc -O3 -arch=sm_89 schwarzschild_blackhole.cu -o bin/nullpath
 
 #include <cuda_runtime.h>
 #include <cmath>

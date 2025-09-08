@@ -8,7 +8,7 @@ CXXFLAGS ?= -O3 -std=$(STD) -Xcompiler -Wall
 DBGFLAGS ?= -G -lineinfo -std=$(STD) -Xcompiler "-g -O0 -Wall -Wextra"
 
 BIN := bin
-APP := $(BIN)/blackhole
+APP := $(BIN)/nullpath
 TEST := $(BIN)/bh_sanity_test
 TEST_DERIVS := $(BIN)/bh_kerr_derivs
 RENDER := $(BIN)/render
