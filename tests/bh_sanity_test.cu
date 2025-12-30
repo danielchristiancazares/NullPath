@@ -1,12 +1,18 @@
-#define BLACKHOLE_NO_MAIN
 #include <cstdio>
 #include <cmath>
 #include <cstdlib>
 #include <algorithm>
 #include <cuda_runtime.h>
 
-// Include the implementation to reuse kernels and helpers
-#include "../schwarzschild_blackhole.cu"
+#include "../include/bh_common.h"
+#include "../include/bh_types.h"
+#include "../include/bh_schwarzschild.h"
+
+// Link against the Schwarzschild implementation unit.
+__global__ void precomputeGeodesicsKernel(float mass, float r_start, float* impact_parameters,
+                                          float* deflection_angles, float* closest_approaches,
+                                          int* ray_status, int num_rays);
+GeodesicLookupTable* precomputeGeodesics(float mass, int num_rays);
 
 static bool nearly_equal(float a, float b, float rel_tol) {
     float diff = fabsf(a - b);
@@ -46,6 +52,10 @@ int main() {
     const float r_ph_theory = PHOTON_SPHERE_MULTIPLIER * Rs;    // 1.5 * Rs
 
     GeodesicLookupTable* table = precomputeGeodesics(mass, num_rays);
+    if (!table) {
+        std::fprintf(stderr, "[fail] Geodesic precompute failed.\n");
+        return 1;
+    }
 
     // Find the transition around b_crit: last non-escaped, first escaped
     int idx_escape = -1;
@@ -61,21 +71,27 @@ int main() {
 
     float bL = table->impact_parameters[idx_last_non_esc];
     float bR = table->impact_parameters[idx_escape];
+    float b_max = table->impact_parameters[table->num_entries - 1];
+    float r_start = std::max(1000.0f, 1.2f * b_max);
 
     // Refine b_crit by bisection using the same CUDA kernel on a single ray
     auto classify_one = [&](float b, float mass, int& status_out, float& rmin_out) {
         float* d_b = nullptr; float* d_defl = nullptr; float* d_rmin = nullptr; int* d_stat = nullptr;
-        cudaMalloc(&d_b, sizeof(float));
-        cudaMalloc(&d_defl, sizeof(float));
-        cudaMalloc(&d_rmin, sizeof(float));
-        cudaMalloc(&d_stat, sizeof(int));
-        cudaMemcpy(d_b, &b, sizeof(float), cudaMemcpyHostToDevice);
-        precomputeGeodesicsKernel<<<1,1>>>(mass, d_b, d_defl, d_rmin, d_stat, 1);
-        cudaDeviceSynchronize();
+        BH_CUDA_CHECK(cudaMalloc(&d_b, sizeof(float)));
+        BH_CUDA_CHECK(cudaMalloc(&d_defl, sizeof(float)));
+        BH_CUDA_CHECK(cudaMalloc(&d_rmin, sizeof(float)));
+        BH_CUDA_CHECK(cudaMalloc(&d_stat, sizeof(int)));
+        BH_CUDA_CHECK(cudaMemcpy(d_b, &b, sizeof(float), cudaMemcpyHostToDevice));
+        precomputeGeodesicsKernel<<<1,1>>>(mass, r_start, d_b, d_defl, d_rmin, d_stat, 1);
+        BH_CUDA_CHECK(cudaGetLastError());
+        BH_CUDA_CHECK(cudaDeviceSynchronize());
         int st = 0; float rmin = 0.0f;
-        cudaMemcpy(&st, d_stat, sizeof(int), cudaMemcpyDeviceToHost);
-        cudaMemcpy(&rmin, d_rmin, sizeof(float), cudaMemcpyDeviceToHost);
-        cudaFree(d_b); cudaFree(d_defl); cudaFree(d_rmin); cudaFree(d_stat);
+        BH_CUDA_CHECK(cudaMemcpy(&st, d_stat, sizeof(int), cudaMemcpyDeviceToHost));
+        BH_CUDA_CHECK(cudaMemcpy(&rmin, d_rmin, sizeof(float), cudaMemcpyDeviceToHost));
+        BH_CUDA_CHECK(cudaFree(d_b));
+        BH_CUDA_CHECK(cudaFree(d_defl));
+        BH_CUDA_CHECK(cudaFree(d_rmin));
+        BH_CUDA_CHECK(cudaFree(d_stat));
         status_out = st; rmin_out = rmin;
     };
 
@@ -156,6 +172,7 @@ int main() {
     delete[] table->impact_parameters;
     delete[] table->deflection_angles;
     delete[] table->closest_approaches;
+    delete[] table->bending_angles;
     delete[] table->ray_status;
     delete table;
 

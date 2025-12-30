@@ -24,17 +24,20 @@ CORE_SRCS = gkval_core.c gkval_io.c
 VALIDATOR_SRCS = gkval_validator.c gkval_adapters.c
 CLI_SRCS = gkval_cli.c
 ALL_SRCS = $(CORE_SRCS) $(VALIDATOR_SRCS) $(CLI_SRCS)
+TEST_SRCS = gkval_fail_window_test.c
 
 # Object files
 CORE_OBJS = $(CORE_SRCS:%.c=$(BUILD_DIR)/%.o)
 VALIDATOR_OBJS = $(VALIDATOR_SRCS:%.c=$(BUILD_DIR)/%.o)
 CLI_OBJS = $(CLI_SRCS:%.c=$(BUILD_DIR)/%.o)
 ALL_OBJS = $(ALL_SRCS:%.c=$(BUILD_DIR)/%.o)
+TEST_OBJS = $(TEST_SRCS:%.c=$(BUILD_DIR)/%.o)
 
 # Targets
 GKVAL_CLI = $(BUILD_DIR)/gkval
 LIBGKVAL_CORE = $(BUILD_DIR)/libgkval_core.a
 LIBGKVAL_VALIDATOR = $(BUILD_DIR)/libgkval_validator.a
+FAILWIN_TEST = $(BUILD_DIR)/gkval_fail_window_test
 
 # Default target
 all: $(BUILD_DIR) $(GKVAL_CLI) $(LIBGKVAL_CORE) $(LIBGKVAL_VALIDATOR)
@@ -81,10 +84,13 @@ install: all
 	install -D gkval_adapters.h /usr/local/include/gkval_adapters.h
 
 # Testing
-test: all
+test: all $(FAILWIN_TEST)
 	@echo "Running validation framework tests..."
 	./$(GKVAL_CLI) init --run-id TEST001 --size 256 --delta 1e-2
 	@echo "✅ Test initialization complete"
+	@echo "Running fail window test..."
+	./$(FAILWIN_TEST)
+	@echo "✅ Fail window test passed"
 	@echo ""
 	@echo "To run a full validation test:"
 	@echo "  ./$(GKVAL_CLI) validate TEST001 ../build/geodesic_batch"
@@ -172,3 +178,5 @@ $(BUILD_DIR)/gkval_io.o: gkval_io.c gkval_core.h
 $(BUILD_DIR)/gkval_validator.o: gkval_validator.c gkval_validator.h gkval_core.h
 $(BUILD_DIR)/gkval_adapters.o: gkval_adapters.c gkval_adapters.h gkval_validator.h gkval_core.h
 $(BUILD_DIR)/gkval_cli.o: gkval_cli.c gkval_core.h gkval_validator.h gkval_adapters.h
+$(FAILWIN_TEST): $(TEST_OBJS) $(CORE_OBJS) $(BUILD_DIR)/gkval_validator.o
+	$(CC) $(CFLAGS) -o $@ $(TEST_OBJS) $(CORE_OBJS) $(BUILD_DIR)/gkval_validator.o $(LDFLAGS)

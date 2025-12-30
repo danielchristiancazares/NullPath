@@ -304,8 +304,8 @@ int gkval_validate_case(gkval_session_t* session, uint64_t case_id,
             // Check acceptance
             size_t first_fail;
             if (gkval_accept_block(geokerr_data, port_data, n, &session->manifest.tolerances, &first_fail) != GKVAL_SUCCESS) {
-                // Create fail window
-                gkval_create_fail_window(session, case_id, field, start + first_fail,
+                // Create fail window (segment-local buffers; convert to absolute indices in helper).
+                gkval_create_fail_window(session, case_id, field, start, first_fail,
                                         geokerr_data, port_data, n);
                 
                 result->success = false;
@@ -421,28 +421,31 @@ int gkval_validate_case(gkval_session_t* session, uint64_t case_id,
 // =============================================================================
 
 int gkval_create_fail_window(gkval_session_t* session, uint64_t case_id,
-                            gkval_field_t field, uint64_t fail_index,
+                            gkval_field_t field, uint64_t segment_start,
+                            uint64_t fail_index_local,
                             const double* geokerr_data, const double* port_data,
                             uint64_t data_len) {
     
-    if (!session || !geokerr_data || !port_data) {
+    if (!session || !geokerr_data || !port_data || fail_index_local >= data_len) {
         return GKVAL_ERROR_INVALID_ARG;
     }
     
     // Calculate window bounds
     uint64_t window_size = GKVAL_DEFAULT_WINDOW_SIZE;
-    uint64_t start = (fail_index >= window_size/2) ? (fail_index - window_size/2) : 0;
-    uint64_t end = start + window_size;
-    if (end > data_len) {
-        end = data_len;
-        start = (end >= window_size) ? (end - window_size) : 0;
+    uint64_t start_local = (fail_index_local >= window_size/2) ? (fail_index_local - window_size/2) : 0;
+    uint64_t end_local = start_local + window_size;
+    if (end_local > data_len) {
+        end_local = data_len;
+        start_local = (end_local >= window_size) ? (end_local - window_size) : 0;
     }
+    uint64_t start_abs = segment_start + start_local;
+    uint64_t end_abs = segment_start + end_local;
     
     // Ensure fail_windows/<case_id> directory exists
     char window_path[1024];
     snprintf(window_path, sizeof(window_path), 
              "%s/fail_windows/%lu/%s_%lu_%lu.bin",
-             session->run_dir, case_id, gkval_field_to_string(field), start, end);
+             session->run_dir, case_id, gkval_field_to_string(field), start_abs, end_abs);
     
     // Create case subdirectory
     char case_dir[1024];
@@ -451,8 +454,8 @@ int gkval_create_fail_window(gkval_session_t* session, uint64_t case_id,
         return GKVAL_ERROR_IO;
     }
     
-    return gkval_save_fail_window(session->run_dir, case_id, field, start, end,
-                                 geokerr_data + start, port_data + start);
+    return gkval_save_fail_window(session->run_dir, case_id, field, start_abs, end_abs,
+                                 geokerr_data + start_local, port_data + start_local);
 }
 
 // =============================================================================

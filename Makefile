@@ -27,7 +27,8 @@ debug: $(BIN)
 	$(NVCC) $(DBGFLAGS) -arch=$(ARCH) -Iinclude schwarzschild_blackhole.cu -o $(APP)
 
 test: $(BIN)
-	$(NVCC) -O2 -std=$(STD) -arch=$(ARCH) -Iinclude tests/bh_sanity_test.cu -o $(TEST)
+	$(NVCC) -O2 -std=$(STD) -arch=$(ARCH) -Iinclude -DBLACKHOLE_NO_MAIN \
+		tests/bh_sanity_test.cu schwarzschild_blackhole.cu -o $(TEST)
 
 run-test: test
 	./$(TEST)

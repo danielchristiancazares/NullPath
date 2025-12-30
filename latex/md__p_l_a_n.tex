@@ -1,0 +1,404 @@
+\chapter{Null\+Path — Research-\/\+Grade Accuracy Implementation Plan }
+\hypertarget{md__p_l_a_n}{}\label{md__p_l_a_n}\index{NullPath — Research-\/Grade Accuracy Implementation Plan@{NullPath — Research-\/Grade Accuracy Implementation Plan}}
+\label{md__p_l_a_n_autotoc_md21}%
+\Hypertarget{md__p_l_a_n_autotoc_md21}%
+
+
+Purpose
+\begin{DoxyItemize}
+\item Make Null\+Path a scientifically rigorous, reproducible null‑geodesic tracer and renderer that matches or exceeds current gold standards (e.\+g., Geo\+Kerr for geodesics; Gyoto/\+RAPTOR class for ray tracing) on accuracy, with clearly quantified error bars and validation artifacts.
+\end{DoxyItemize}
+
+Scope
+\begin{DoxyItemize}
+\item Primary focus\+: scientific accuracy ("{}research"{} mode). Non‑research/fast modes are out of scope for this plan.
+\item Spacetimes\+: Schwarzschild (now), Kerr (next). Only vacuum metrics; matter effects and polarization are out of scope for this phase.
+\end{DoxyItemize}
+
+Outcomes
+\begin{DoxyItemize}
+\item A verified geodesic solver with tight, documented accuracy targets; reproducible comparison datasets vs. literature and established codes; images and tables that can be cited.
+\end{DoxyItemize}
+
+\DoxyHorRuler{0}
+\hypertarget{md__p_l_a_n_autotoc_md23}{}\doxysection{\texorpdfstring{1) Definitions, Units, and Conventions}{1) Definitions, Units, and Conventions}}\label{md__p_l_a_n_autotoc_md23}
+
+\begin{DoxyItemize}
+\item Units
+\begin{DoxyItemize}
+\item Geometric units (G = c = 1). Report both M and Rs=2M units in logs and artifacts.
+\end{DoxyItemize}
+\item Impact parameter
+\begin{DoxyItemize}
+\item b ≡ L/E at infinity. Always additionally report b/M.
+\end{DoxyItemize}
+\item Critical scales (Schwarzschild)
+\begin{DoxyItemize}
+\item Photon sphere\+: r\+\_\+ph = 3M = 1.\+5 Rs.
+\item Critical impact\+: b\+\_\+crit = 3√3 M = (3√3/2) Rs.
+\end{DoxyItemize}
+\item r\+\_\+min
+\begin{DoxyItemize}
+\item Turning radius (if it exists)\+: the largest positive real root of the radial turning-\/point equation.
+\item For captured rays (no turning point), r\+\_\+turning is undefined; report NaN and a separate closest\+\_\+radius\+\_\+reached for diagnostics.
+\end{DoxyItemize}
+\item Deflection and lensing angles
+\begin{DoxyItemize}
+\item Store total Δφ along the path; define lensing bend α = Δφ − π for escaped rays.
+\end{DoxyItemize}
+\item Observer tetrads
+\begin{DoxyItemize}
+\item Schwarzschild\+: static observer.
+\item Kerr\+: ZAMO by default (static only where timelike, i.\+e., g\+\_\+tt \texorpdfstring{$<$}{<} 0). Document the choice in metadata.
+\end{DoxyItemize}
+\end{DoxyItemize}
+
+\DoxyHorRuler{0}
+\hypertarget{md__p_l_a_n_autotoc_md25}{}\doxysection{\texorpdfstring{2) Accuracy Targets (Research Mode)}{2) Accuracy Targets (Research Mode)}}\label{md__p_l_a_n_autotoc_md25}
+Schwarzschild
+\begin{DoxyItemize}
+\item r\+\_\+min(b)\+: relative error ≤ 1e−12 for b ≥ 1.\+05 b\+\_\+crit; ≤ 1e−6 down to 1.\+01 b\+\_\+crit.
+\item b\+\_\+crit\+: \texorpdfstring{$\vert$}{|}b\+\_\+num − 3√3 M\texorpdfstring{$\vert$}{|} / (3√3 M) ≤ 1e−10.
+\item Deflection α(b)\+:
+\begin{DoxyItemize}
+\item Weak field (b ≥ 20 M)\+: \texorpdfstring{$\vert$}{|}α\+\_\+num − α\+\_\+\+PN\texorpdfstring{$\vert$}{|} ≤ 1e−3.
+\item Near-\/critical fit α(b) ≈ −c1 ln(b/b\+\_\+crit − 1) + c2\+: c1 within 1\% of the known analytic value; c2 within 2\%.
+\end{DoxyItemize}
+\item Invariants drift along accepted steps\+: \texorpdfstring{$\vert$}{|}\+H\texorpdfstring{$\vert$}{|}max ≤ 1e−12, \texorpdfstring{$\vert$}{|}Δ\+E/\+E\texorpdfstring{$\vert$}{|}, \texorpdfstring{$\vert$}{|}Δ\+L/\+E\texorpdfstring{$\vert$}{|} ≤ 1e−12.
+\end{DoxyItemize}
+
+Kerr
+\begin{DoxyItemize}
+\item Match reference tool (Geo\+Kerr) over a modest grid of (a/M, b/M, θ\+\_\+obs)\+:
+\begin{DoxyItemize}
+\item Δφ agreement ≤ 1e−6 rad (equatorial); ≤ 1e−5 off‑equatorial.
+\item Identical fate (escape/capture/spherical) classification.
+\end{DoxyItemize}
+\item Invariants with Carter constant Q\+: \texorpdfstring{$\vert$}{|}\+H\texorpdfstring{$\vert$}{|}max ≤ 1e−12, \texorpdfstring{$\vert$}{|}Δ\+E/\+E\texorpdfstring{$\vert$}{|}, \texorpdfstring{$\vert$}{|}Δ\+Lz/\+E\texorpdfstring{$\vert$}{|}, \texorpdfstring{$\vert$}{|}Δ\+Q/\+Q\texorpdfstring{$\vert$}{|} ≤ 1e−10.
+\end{DoxyItemize}
+
+Renderer (when relevant)
+\begin{DoxyItemize}
+\item Equatorial thin disk intersections reproducible to ≤ 1e−9 r.
+\item Golden images PSNR ≥ 60 dB relative to research baseline (identical seeds/settings).
+\end{DoxyItemize}
+
+\DoxyHorRuler{0}
+\hypertarget{md__p_l_a_n_autotoc_md27}{}\doxysection{\texorpdfstring{3) Architecture Choices (Research Mode)}{3) Architecture Choices (Research Mode)}}\label{md__p_l_a_n_autotoc_md27}
+
+\begin{DoxyItemize}
+\item Precision\+: FP64 in all geodesic math and event detection; FP32 allowed only for shading and final buffer packing.
+\item Integrator
+\begin{DoxyItemize}
+\item Schwarzschild\+: Hamiltonian RK with analytic turning radius and potential‑aware events; optional exact quadrature for φ(r) to audit α(b).
+\item Kerr\+: Prefer separated form in Mino time (λ̃) using Carter potentials R(r), Θ(θ) for research mode; keep Hamiltonian form available for cross‑checks.
+\end{DoxyItemize}
+\item Coordinates
+\begin{DoxyItemize}
+\item Use BL for far field; near the horizon or when g\+\_\+tt → 0 (Kerr), prefer horizon‑regular forms (Eddington–\+Finkelstein or Kerr–\+Schild) or terminate with clear classification before ill‑conditioning.
+\end{DoxyItemize}
+\item Adaptive error control
+\begin{DoxyItemize}
+\item Embedded high‑order method (RKF78 / DOP853) or step‑doubling with strict rejection; invariant‑gated acceptance (H, E, Lz, Q).
+\end{DoxyItemize}
+\item Events and classification
+\begin{DoxyItemize}
+\item Escape\+: asymptotic check (monotone r beyond r\+\_\+esc and positive radial potential), not just r threshold.
+\item Turning points\+: explicit detection from potentials; analytic turning radius in Schwarzschild, robust root‑finding in Kerr.
+\item Disk intersections\+: root‑find θ − π/2 between brackets with interpolation safe-\/guards; sort multi‑hits; self‑occlusion optional.
+\end{DoxyItemize}
+\end{DoxyItemize}
+
+\DoxyHorRuler{0}
+\hypertarget{md__p_l_a_n_autotoc_md29}{}\doxysection{\texorpdfstring{4) Workstreams and Deliverables}{4) Workstreams and Deliverables}}\label{md__p_l_a_n_autotoc_md29}
+WS‑0 — Research Mode Baseline and Governance (1–2 days)
+\begin{DoxyItemize}
+\item Add a single “research” mode switch that forces FP64, disables fast‑math, and sets strict integrator tolerances and invariant gates.
+\item CLI\+: {\ttfamily -\/-\/mode research} is the only documented mode in this plan.
+\item Metadata JSON sidecar for every product\+: commit, compile flags, GPU, CC, driver, integrator kind/order, tolerances, scene params, RNG seed, timing.
+\item Deliverable\+: example run produces image/table + JSON; deterministic across runs on the same GPU/driver.
+\end{DoxyItemize}
+
+WS‑1 — Schwarzschild Accuracy Pack (4–6 days)
+\begin{DoxyEnumerate}
+\item Exact turning radius and classification
+\begin{DoxyItemize}
+\item Implement closed‑form r\+\_\+min(b) from cubic r\texorpdfstring{$^\wedge$}{\string^}3 − b\texorpdfstring{$^\wedge$}{\string^}2 r + b\texorpdfstring{$^\wedge$}{\string^}2 Rs = 0 for b \texorpdfstring{$>$}{>} b\+\_\+crit.
+\item Output arrays\+: turning\+\_\+radius (NaN if none), closest\+\_\+radius\+\_\+reached (for captured/diagnostics).
+\end{DoxyItemize}
+\item Escape and deflection
+\begin{DoxyItemize}
+\item Replace “r\texorpdfstring{$>$}{>}threshold” with potential‑aware escape\+: require r≥r\+\_\+esc and monotone increase with R(r)\texorpdfstring{$>$}{>}0 for k consecutive steps.
+\item Validate α(b) with PN series at large b and strong‑deflection fit near b\+\_\+crit (Bozza)\+: report residuals.
+\end{DoxyItemize}
+\item Initial condition independence
+\begin{DoxyItemize}
+\item Demonstrate α(b) invariance for r0∈\{500,1000,2000\} Rs (Δα ≤ 1e−6). Prefer turning‑point init for audit path.
+\end{DoxyItemize}
+\item Convergence \& invariants
+\begin{DoxyItemize}
+\item Adaptive stepping + invariant gates (H, E, L) with reject/halve on violation; plot error vs. step.
+\end{DoxyItemize}
+\item Tests \& artifacts
+\begin{DoxyItemize}
+\item Unit tests\+: b\+\_\+crit, r\+\_\+min(b) grid, α(b) vs PN/strong‑deflection; convergence slopes.
+\item Artifacts\+: CSV tables, plots (saved via scripts), and a “\+Schwarzschild validation” README with figures.
+\end{DoxyItemize}
+\end{DoxyEnumerate}
+
+WS‑2 — Kerr Accuracy Pack (8–12 days)
+\begin{DoxyEnumerate}
+\item Separated equations in Mino time
+\begin{DoxyItemize}
+\item Implement R(r), Θ(θ) potentials, Carter constant Q; integrate dφ/dλ̃, dt/dλ̃ alongside dr/dλ̃, dθ/dλ̃.
+\item Robust root‑finding at turning points; event functions for spherical photon orbits (R=0, d\+R/dr=0).
+\end{DoxyItemize}
+\item Observer and emitter frames
+\begin{DoxyItemize}
+\item Use ZAMO tetrad by default. Provide static only where g\+\_\+tt \texorpdfstring{$<$}{<} 0 (assert otherwise).
+\item Disk inner radius r\+\_\+in = r\+\_\+isco(a) (analytic expression); expose override.
+\end{DoxyItemize}
+\item Validation grid
+\begin{DoxyItemize}
+\item Build a modest set of cases (e.\+g., a/M ∈ \{0,0.\+5,0.\+9,0.\+99\}, b/M spanning near‑critical to weak‑field; θ\+\_\+obs ∈ \{π/2, π/3\}).
+\item Cross‑validate Δφ, turning radii, and fates vs Geo\+Kerr.
+\end{DoxyItemize}
+\item Invariants and convergence
+\begin{DoxyItemize}
+\item Track H, E, Lz, Q drift; require research‑mode thresholds. Show p‑order slopes.
+\end{DoxyItemize}
+\item Tests \& artifacts
+\begin{DoxyItemize}
+\item GPU tests gated by env; reference CSV from Geo\+Kerr runs (stored under {\ttfamily geokerr\+\_\+port/validation/test\+\_\+data/}).
+\item Plots and summary tables committed.
+\end{DoxyItemize}
+\end{DoxyEnumerate}
+
+WS‑3 — Research‑\+Grade Disk Rendering (Optional, 4–6 days)
+\begin{DoxyEnumerate}
+\item Disk geometry and intersections
+\begin{DoxyItemize}
+\item Multi‑hit traversal; sort by affine parameter; self‑occlusion enabled.
+\item Robust equatorial crossing root‑find with angle guarding.
+\end{DoxyItemize}
+\item Radiometry
+\begin{DoxyItemize}
+\item I\+\_\+obs = g\texorpdfstring{$^\wedge$}{\string^}3 I\+\_\+em with I\+\_\+em(r) = r\texorpdfstring{$^\wedge$}{\string^}−p; record p in metadata. Optionally add banded outputs (grayscale per ν band).
+\end{DoxyItemize}
+\item Golden images
+\begin{DoxyItemize}
+\item Fixed seeds, metadata, PSNR ≥ 60 dB across reruns. Provide reference PNG/\+EXR assets.
+\end{DoxyItemize}
+\end{DoxyEnumerate}
+
+WS‑4 — Reproducibility \& Tooling (2–3 days)
+\begin{DoxyEnumerate}
+\item Sidecar JSON metadata for all outputs (tables, images).
+\item Experiment manifests (YAML/\+JSON)\+: end‑to‑end reproducible configurations to regenerate figures.
+\item Scripts under {\ttfamily scripts/} for\+: validation runs, plot generation, and Geo\+Kerr harness.
+\end{DoxyEnumerate}
+
+WS‑5 — Repository Restructure and Documentation (2–3 days)
+\begin{DoxyEnumerate}
+\item Layout\+: {\ttfamily src/}, {\ttfamily include/}, {\ttfamily tests/}, {\ttfamily scripts/}, {\ttfamily bin/} (as per AGENTS.\+md).
+\item Developer docs\+: theory notes (b\+\_\+crit, turning radius, Carter separation, ZAMO, Iν invariance), validation methodology, usage.
+\item Build presets\+: {\ttfamily make research} (strict flags; FP64; no fast‑math), test targets; README badges for “research mode ready”.
+\end{DoxyEnumerate}
+
+\DoxyHorRuler{0}
+\hypertarget{md__p_l_a_n_autotoc_md31}{}\doxysection{\texorpdfstring{5) Validation Plan and Datasets}{5) Validation Plan and Datasets}}\label{md__p_l_a_n_autotoc_md31}
+Analytic (Schwarzschild)
+\begin{DoxyItemize}
+\item b\+\_\+crit exact value; r\+\_\+min(b) closed form; α(b) PN series at large b; strong‑deflection expansion near b\+\_\+crit.
+\item Datasets\+: CSV of (b/M, r\+\_\+min/\+Rs, α, flags) for several grids; plot residuals.
+\end{DoxyItemize}
+
+Cross‑tool (Kerr \& Schwarzschild)
+\begin{DoxyItemize}
+\item Use {\ttfamily geokerr\+\_\+port/reference/\texorpdfstring{$\ast$}{*}.f} to generate reference tables (M=1 units)\+: Δφ, r\+\_\+turning, and fates for curated cases.
+\item Store reference outputs under {\ttfamily geokerr\+\_\+port/validation/test\+\_\+data/} (already present); version them with SHA and parameter stamps.
+\item Comparison scripts compute Δ metrics and assert acceptance thresholds.
+\end{DoxyItemize}
+
+Convergence \& Invariants
+\begin{DoxyItemize}
+\item For a set of rays\+: run at multiple tolerances/step sizes; fit slope p; assert expected order within ±0.2.
+\item Track invariant drifts; assert maxima within thresholds; save histograms.
+\end{DoxyItemize}
+
+Rendering
+\begin{DoxyItemize}
+\item Golden images (PNG/\+EXR) with sidecar JSON; PSNR/\+SSIM versus baseline.
+\end{DoxyItemize}
+
+Artifacts
+\begin{DoxyItemize}
+\item Store plots (PDF/\+PNG) and CSV/\+JSON summaries in {\ttfamily tests/artifacts/} with auto‑generated index.
+\end{DoxyItemize}
+
+\DoxyHorRuler{0}
+\hypertarget{md__p_l_a_n_autotoc_md33}{}\doxysection{\texorpdfstring{6) Numerical \& GPU Considerations}{6) Numerical \& GPU Considerations}}\label{md__p_l_a_n_autotoc_md33}
+Precision and math
+\begin{DoxyItemize}
+\item FP64 kernels for geodesics; require precise division/sqrt; prefer fused FMA.
+\item Avoid FTZ/\+DAZ for FP64 segments. Clamp only where mathematically justified (e.\+g., sin θ → sign‑preserving small value).
+\end{DoxyItemize}
+
+Step control
+\begin{DoxyItemize}
+\item Research mode\+: mandatory adaptive with strict tolerances (e.\+g., rel 1e−12, abs 1e−14) and invariant gates.
+\item Quantize accepted h only if it does not inflate error; otherwise leave continuous.
+\end{DoxyItemize}
+
+Event robustness
+\begin{DoxyItemize}
+\item Use bracketed root‑finders (bisection + secant) for events (turning points, θ=π/2 crossing) to guarantee convergence.
+\end{DoxyItemize}
+
+Parallelism and determinism
+\begin{DoxyItemize}
+\item One ray per thread; avoid race conditions; diagnostical atomics are okay but not used to alter physics decisions.
+\item Deterministic sampling\+: fixed seeds from pixel coords and pass index.
+\end{DoxyItemize}
+
+Memory and performance
+\begin{DoxyItemize}
+\item Keep pinned host buffers and tiling; overlap compute and transfers. Performance is secondary to accuracy but we should avoid pathological slowdowns.
+\end{DoxyItemize}
+
+\DoxyHorRuler{0}
+\hypertarget{md__p_l_a_n_autotoc_md35}{}\doxysection{\texorpdfstring{7) Build \& Run Modes}{7) Build \& Run Modes}}\label{md__p_l_a_n_autotoc_md35}
+
+\begin{DoxyItemize}
+\item Research build flags (NVCC)
+\begin{DoxyItemize}
+\item {\ttfamily -\/O3 -\/std=c++17 -\/Xcompiler -\/Wall -\/arch=sm\+\_\+\+XX} with precise math; no {\ttfamily -\/use\+\_\+fast\+\_\+math}.
+\item Ensure {\ttfamily -\/-\/prec-\/div=true -\/-\/prec-\/sqrt=true} if applicable; keep FMA enabled.
+\end{DoxyItemize}
+\item Make targets
+\begin{DoxyItemize}
+\item {\ttfamily make research} → builds app and tests with strict flags and FP64 for geodesics.
+\item {\ttfamily make run-\/test} → full research validations on current GPU (time‑boxed by env variables).
+\item {\ttfamily make quick-\/test} → small subset for smoke.
+\end{DoxyItemize}
+\end{DoxyItemize}
+
+\DoxyHorRuler{0}
+\hypertarget{md__p_l_a_n_autotoc_md37}{}\doxysection{\texorpdfstring{8) File‑\+Level Changes (Outline Only; to be implemented under PRs)}{8) File‑\+Level Changes (Outline Only; to be implemented under PRs)}}\label{md__p_l_a_n_autotoc_md37}
+Core geodesics
+\begin{DoxyItemize}
+\item {\ttfamily include/bh\+\_\+common.\+h}\+: helpers for units, constants; invariant thresholds; research mode flags.
+\item {\ttfamily include/bh\+\_\+schwarzschild.\+h}\+: FP64 variant; analytic turning radius helper; potential‑aware events; optional EF/\+Kerr–\+Schild note.
+\item {\ttfamily include/bh\+\_\+kerr.\+h}\+: Mino‑time pathway (R, Θ, Carter Q); analytic derivatives already present; ZAMO observer default.
+\item {\ttfamily src/schwarzschild\+\_\+precompute.\+cu} (refactor from single file)\+: tables with turning\+\_\+radius, closest\+\_\+radius, deflection, bending, status.
+\end{DoxyItemize}
+
+Renderer
+\begin{DoxyItemize}
+\item {\ttfamily src/render.\+cu}\+: robust disk crossing root‑finding; multi‑hit; r\+\_\+in=r\+\_\+isco(a); invariant‑gated adaptive in research mode.
+\end{DoxyItemize}
+
+Tests \& scripts
+\begin{DoxyItemize}
+\item {\ttfamily tests/}\+: schwarzschild\+\_\+accuracy\+\_\+tests.\+cu, kerr\+\_\+grid\+\_\+tests.\+cu, invariants\+\_\+convergence.\+cu.
+\item {\ttfamily scripts/}\+: geokerr\+\_\+harness.\+py, plot\+\_\+schwarzschild.\+py, plot\+\_\+kerr\+\_\+grid.\+py, gen\+\_\+manifests.\+py.
+\end{DoxyItemize}
+
+\DoxyHorRuler{0}
+\hypertarget{md__p_l_a_n_autotoc_md39}{}\doxysection{\texorpdfstring{9) Milestones, Timeline, and Success Criteria}{9) Milestones, Timeline, and Success Criteria}}\label{md__p_l_a_n_autotoc_md39}
+M0 — Governance \& Research Mode (Day 1–2)
+\begin{DoxyItemize}
+\item Done when\+: metadata sidecars, strict flags, deterministic runs; a minimal analytic check passes.
+\end{DoxyItemize}
+
+M1 — Schwarzschild Accuracy (Day 3–8)
+\begin{DoxyItemize}
+\item Done when\+: r\+\_\+min(b) and α(b) datasets meet targets; convergence and invariants plots committed; b\+\_\+crit passes to 1e−10.
+\end{DoxyItemize}
+
+M2 — Kerr Accuracy (Day 9–20)
+\begin{DoxyItemize}
+\item Done when\+: Kerr grid matches Geo\+Kerr within targets; invariants with Q meet thresholds; spherical photon orbit detection validated.
+\end{DoxyItemize}
+
+M3 — Rendering Research Features (Day 21–26)
+\begin{DoxyItemize}
+\item Done when\+: disk multi‑hit with robust root‑finding; golden images with PSNR ≥ 60 dB; metadata present.
+\end{DoxyItemize}
+
+M4 — Reproducibility \& Docs (Day 27–30)
+\begin{DoxyItemize}
+\item Done when\+: experiment manifests regenerate artifacts; docs include theory notes and validation methods; repository reorganized.
+\end{DoxyItemize}
+
+Stretch Goals
+\begin{DoxyItemize}
+\item Mino‑time + adaptive RKF78 implementation optimized for GPU; optional multi‑\+GPU tile distribution.
+\end{DoxyItemize}
+
+\DoxyHorRuler{0}
+\hypertarget{md__p_l_a_n_autotoc_md41}{}\doxysection{\texorpdfstring{10) Risks and Mitigations}{10) Risks and Mitigations}}\label{md__p_l_a_n_autotoc_md41}
+
+\begin{DoxyItemize}
+\item Near‑critical stiffness (b → b\+\_\+crit)
+\begin{DoxyItemize}
+\item Mitigate with analytic turning radii (Schwarzschild) and separated Mino‑time integration (Kerr).
+\end{DoxyItemize}
+\item Horizon coordinate issues in BL
+\begin{DoxyItemize}
+\item Use ZAMO observers; terminate before ill‑conditioning; consider EF/\+Kerr–\+Schild.
+\end{DoxyItemize}
+\item Cross‑tool discrepancies (convention mismatches)
+\begin{DoxyItemize}
+\item Normalize units; document definitions (b, r\+\_\+min vs. closest radius); write comparison adapters.
+\end{DoxyItemize}
+\item GPU nondeterminism
+\begin{DoxyItemize}
+\item Avoid physics decisions based on atomics; log diagnostics only; fixed seeds.
+\end{DoxyItemize}
+\end{DoxyItemize}
+
+\DoxyHorRuler{0}
+\hypertarget{md__p_l_a_n_autotoc_md43}{}\doxysection{\texorpdfstring{11) Review Checklist (Per PR)}{11) Review Checklist (Per PR)}}\label{md__p_l_a_n_autotoc_md43}
+
+\begin{DoxyItemize}
+\item Physics
+\begin{DoxyItemize}
+\item Equations match references; units consistent; events defined clearly; invariants bounded.
+\end{DoxyItemize}
+\item Numerics
+\begin{DoxyItemize}
+\item Adaptive control present; convergence evidence; tolerances justified.
+\end{DoxyItemize}
+\item Validation
+\begin{DoxyItemize}
+\item Tests updated; artifacts regenerated; comparisons vs. references included.
+\end{DoxyItemize}
+\item Reproducibility
+\begin{DoxyItemize}
+\item Metadata present; manifests updated; seeds fixed.
+\end{DoxyItemize}
+\item Docs
+\begin{DoxyItemize}
+\item Theory and method notes; CLI options; acceptance criteria.
+\end{DoxyItemize}
+\end{DoxyItemize}
+
+\DoxyHorRuler{0}
+\hypertarget{md__p_l_a_n_autotoc_md45}{}\doxysection{\texorpdfstring{12) References (non‑exhaustive; for implementation guidance)}{12) References (non‑exhaustive; for implementation guidance)}}\label{md__p_l_a_n_autotoc_md45}
+
+\begin{DoxyItemize}
+\item S. Chandrasekhar, The Mathematical Theory of Black Holes, OUP (1983).
+\item V. Bozza, "{}\+Gravitational lensing in the strong field limit,"{} Phys. Rev. D (2002) and follow‑ups.
+\item E. Teo, "{}\+Spherical photon orbits around a Kerr black hole,"{} Gen. Rel. Grav. 52, 5 (2020).
+\item Bardeen, Press, Teukolsky (1972), rotating black holes and LNRF/\+ZAMO frames.
+\item Carter (1968), constant of motion and separability in Kerr.
+\item Geo\+Kerr (Hamilton + collaborators)\+: semi‑analytic Kerr geodesics; use as reference for Δφ and r\+\_\+turning.
+\item Gyoto, RAPTOR\+: ray‑tracing implementations for reference behavior and features.
+\end{DoxyItemize}
+
+\DoxyHorRuler{0}
+\hypertarget{md__p_l_a_n_autotoc_md47}{}\doxysection{\texorpdfstring{13) Immediate Next Actions (No Code Changes Until Approved)}{13) Immediate Next Actions (No Code Changes Until Approved)}}\label{md__p_l_a_n_autotoc_md47}
+1) Confirm r\+\_\+min convention (turning\+\_\+radius NaN for captured; keep closest\+\_\+radius\+\_\+reached separately). 2) Approve WS‑0 and WS‑1 as first implementation batches. 3) Identify the initial Schwarzschild b grid for validation datasets (e.\+g., 200 logarithmically spaced b values from 1.\+01 b\+\_\+crit to 100 M). 4) Decide on preferred analytic sources for PN and strong‑deflection coefficients (Bozza parameters) for inclusion in tests.
+
+End of PLAN.\+md 

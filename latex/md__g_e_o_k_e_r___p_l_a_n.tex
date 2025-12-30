@@ -1,0 +1,264 @@
+\chapter{GEOKER bit‑exact parity roadmap }
+\hypertarget{md__g_e_o_k_e_r___p_l_a_n}{}\label{md__g_e_o_k_e_r___p_l_a_n}\index{GEOKER bit‑exact parity roadmap@{GEOKER bit‑exact parity roadmap}}
+\label{md__g_e_o_k_e_r___p_l_a_n_autotoc_md0}%
+\Hypertarget{md__g_e_o_k_e_r___p_l_a_n_autotoc_md0}%
+
+
+This plan drives the CUDA Geo\+Kerr (GPU) implementation to bit‑exact parity with the reference (CPU) along a single, reproducible configuration. It breaks the work into strict determinism controls, math library alignment, algorithmic alignment, and verification hardening.
+
+Success criteria\+:
+\begin{DoxyItemize}
+\item For the target platform (specified below), every validated field sample matches bit‑for‑bit\+: ULP distance = 0 across the entire grid and all cases.
+\item Validator passes with quantization disabled (quant\+\_\+lsb = 0) and ULP check enabled, with atol = rtol = 0 in “bit‑exact mode”.
+\end{DoxyItemize}
+
+Scope and assumptions\+:
+\begin{DoxyItemize}
+\item Target a single deterministic hardware/software stack first; broaden later.
+\item We accept any performance loss during the bring‑up; we can re‑optimize under constraints once parity is achieved.
+\end{DoxyItemize}
+
+Target baseline (locked)\+:
+\begin{DoxyItemize}
+\item GPU arch\+: one specific SM (e.\+g., sm\+\_\+86 on the current machine; adjust as needed).
+\item CUDA\+: the version installed in this repo’s environment (record exact version).
+\item Compiler(s)\+: GCC/\+Clang exact version; NVCC exact version.
+\item OS/driver\+: current WSL/driver versions recorded.
+\end{DoxyItemize}
+
+Deliverables\+:
+\begin{DoxyItemize}
+\item Deterministic build configurations (Makefile updates) for CPU and GPU.
+\item Shared deterministic math layer used by both CPU and GPU paths.
+\item Extended validator configuration\+: bit‑exact mode and detailed mismatch tracing.
+\item Documentation and CI check that enforces bit‑exact on the target stack.
+\end{DoxyItemize}
+
+Bit‑exact profile defaults (recommended for initial bring‑up)\+:
+\begin{DoxyItemize}
+\item Grid size S\+: start small (e.\+g., 256–512) to speed iteration.
+\item Grid spacing delta\+: 1e-\/4 (tunable). 1e-\/3 is acceptable but coarser; smaller deltas help isolate early‑step drift.
+\item Quantization\+: 0 (disabled).
+\item Tolerances\+: atol=0, rtol=0, max\+\_\+ulps=0.
+\end{DoxyItemize}
+
+\DoxyHorRuler{0}
+\hypertarget{md__g_e_o_k_e_r___p_l_a_n_autotoc_md2}{}\doxysection{\texorpdfstring{Phase 0 — Baseline capture and reproducibility}{Phase 0 — Baseline capture and reproducibility}}\label{md__g_e_o_k_e_r___p_l_a_n_autotoc_md2}
+1) Inventory and freeze environment
+\begin{DoxyItemize}
+\item Record\+: GPU model + SM, NVIDIA driver, CUDA toolkit, NVCC, GCC/\+Clang.
+\item Lock compiler flags via Makefile to a new "{}deterministic"{} config.
+\end{DoxyItemize}
+
+2) Determinism audit (current code)
+\begin{DoxyItemize}
+\item Ensure no parallel reductions or data‑dependent iteration counts that differ between CPU/\+GPU.
+\item Ensure branch thresholds/epsilons identical and centralized.
+\item Ensure no non‑deterministic atomics or unordered writes are used in validated paths.
+\end{DoxyItemize}
+
+3) Validation harness hardening
+\begin{DoxyItemize}
+\item Re‑enable ULP check in {\ttfamily gkval\+\_\+core.\+c} and add a "{}bit‑exact"{} profile\+:
+\begin{DoxyItemize}
+\item tolerances\+: atol = 0, rtol = 0, max\+\_\+ulps = 0
+\item quantization\+: quant\+\_\+lsb = 0.
+\end{DoxyItemize}
+\item Add option to dump first mismatch with\+: index, field, a\+\_\+bits, b\+\_\+bits, ulp, and the expression lineage if available.
+\end{DoxyItemize}
+
+Exit criteria\+: repeatable runs (same hashes) on the target machine with today’s code/flags, even if not yet bit‑exact.
+
+\DoxyHorRuler{0}
+\hypertarget{md__g_e_o_k_e_r___p_l_a_n_autotoc_md4}{}\doxysection{\texorpdfstring{Phase 1 — Strict FP semantics alignment (toolchain \& flags)}{Phase 1 — Strict FP semantics alignment (toolchain \& flags)}}\label{md__g_e_o_k_e_r___p_l_a_n_autotoc_md4}
+Goal\+: eliminate compiler/runtime FP variance between CPU and GPU.
+
+A) Host compiler flags (CPU reference build)
+\begin{DoxyItemize}
+\item Disable fast‑math and contraction; standard rounding and precision\+:
+\begin{DoxyItemize}
+\item {\ttfamily -\/O2 -\/fno-\/fast-\/math -\/fno-\/associative-\/math -\/fno-\/unsafe-\/math-\/optimizations -\/ffp-\/contract=off}
+\item {\ttfamily -\/fexcess-\/precision=standard -\/frounding-\/math}
+\item On x86‑64, force SSE (avoid x87 extended precision)\+: {\ttfamily -\/mfpmath=sse -\/msse2}
+\end{DoxyItemize}
+\item Do not use {\ttfamily -\/ffloat-\/store} unless a last‑resort (hurts perf and not usually needed with SSE2).
+\end{DoxyItemize}
+
+B) Device compiler flags (CUDA build)
+\begin{DoxyItemize}
+\item Enforce IEEE‑like semantics and disable fused transformations unless used explicitly\+:
+\begin{DoxyItemize}
+\item {\ttfamily -\/-\/fmad=false} (or use explicit {\ttfamily fma} on both sides; see Phase 2)
+\item {\ttfamily -\/-\/prec-\/div=true -\/-\/prec-\/sqrt=true}
+\item {\ttfamily -\/ftz=false} (preserve subnormals)
+\end{DoxyItemize}
+\item Do not use {\ttfamily -\/-\/use\+\_\+fast\+\_\+math}.
+\item Target a single SM\+: {\ttfamily -\/arch=sm\+\_\+\+XX -\/code=sm\+\_\+\+XX} where XX is the chosen baseline.
+\end{DoxyItemize}
+
+C) Runtime FP state
+\begin{DoxyItemize}
+\item CPU\+: ensure FE\+\_\+\+TONEAREST and that FTZ/\+DAZ are disabled (already implemented in {\ttfamily gkval\+\_\+validate\+\_\+fp\+\_\+env}).
+\item GPU\+: rely on compile options above (no fast‑math, no FTZ), and avoid intrinsics with unspecified rounding.
+\end{DoxyItemize}
+
+Exit criteria\+: micro‑kernels using only +, −, ×, ÷, sqrt produce identical bit patterns CPU vs GPU for controlled inputs.
+
+\DoxyHorRuler{0}
+\hypertarget{md__g_e_o_k_e_r___p_l_a_n_autotoc_md6}{}\doxysection{\texorpdfstring{Phase 2 — Deterministic math layer (shared CPU/\+GPU)}{Phase 2 — Deterministic math layer (shared CPU/\+GPU)}}\label{md__g_e_o_k_e_r___p_l_a_n_autotoc_md6}
+Goal\+: remove libm/libdevice drift; unify the exact operations and rounding points used in the algorithm.
+
+1) Create {\ttfamily include/geokerr\+\_\+math.\+h} + {\ttfamily src/geokerr\+\_\+math.\+cu}
+\begin{DoxyItemize}
+\item Provide a minimal set of primitives as inline {\ttfamily \+\_\+\+\_\+host\+\_\+\+\_\+ \+\_\+\+\_\+device\+\_\+\+\_\+} functions for double\+:
+\begin{DoxyItemize}
+\item add/sub/mul with explicit rounding on device\+: {\ttfamily \+\_\+\+\_\+dadd\+\_\+rn}, {\ttfamily \+\_\+\+\_\+dsub\+\_\+rn}, {\ttfamily \+\_\+\+\_\+dmul\+\_\+rn} (CUDA intrinsics).
+\item {\ttfamily fma\+\_\+rn(a,b,c)}\+: on CPU call {\ttfamily fma(a,b,c)}, on GPU call {\ttfamily \+\_\+\+\_\+fma\+\_\+rn(a,b,c)}.
+\item {\ttfamily div\+\_\+rn(a,b)}\+: device relies on precise division; host uses {\ttfamily /}.
+\item {\ttfamily sqrt\+\_\+rn(x)}\+: device uses {\ttfamily sqrt(x)} with {\ttfamily -\/-\/prec-\/sqrt=true}; host uses {\ttfamily sqrt}.
+\end{DoxyItemize}
+\item Replace compound expressions in hot paths with these primitives to lock operation order and rounding.
+\end{DoxyItemize}
+
+2) Transcendentals inventory
+\begin{DoxyItemize}
+\item Catalog all uses of {\ttfamily pow}, {\ttfamily exp}, {\ttfamily log}, {\ttfamily sin}, {\ttfamily cos}, {\ttfamily atan2}, etc.
+\item Prefer algorithmic rewrites to avoid transcendentals where possible (e.\+g., fixed powers via multiplies; {\ttfamily exp(log(x)\texorpdfstring{$\ast$}{*}n)} replaced by repeated mul for small integer n).
+\item If any transcendental remains in the validated path, consider a shared, deterministic implementation\+:
+\begin{DoxyItemize}
+\item Option A (best)\+: integrate a correctly‑rounded library usable on CPU, and port a numerically identical path to CUDA (limited surface, e.\+g., {\ttfamily log}, {\ttfamily exp}).
+\item Option B (pragmatic)\+: implement the specific approximations we need in header‑only form and use identically on CPU/\+GPU.
+\end{DoxyItemize}
+\end{DoxyItemize}
+
+3) Constants hygiene
+\begin{DoxyItemize}
+\item Express critical constants as hexadecimal floating literals to fix exact binary values (e.\+g., {\ttfamily 0x1.\+921fb54442d18p+1} for π).
+\item Centralize all epsilons/tolerances in one header; avoid duplicated literals across files.
+\end{DoxyItemize}
+
+4) Operation ordering
+\begin{DoxyItemize}
+\item Parenthesize expressions to pin evaluation order.
+\item Replace fragile algebraic rewrites with explicit sequencing via the math wrappers.
+\end{DoxyItemize}
+
+Exit criteria\+: unit tests for the math layer show CPU/\+GPU identity at the bit level across a representative input corpus.
+
+\DoxyHorRuler{0}
+\hypertarget{md__g_e_o_k_e_r___p_l_a_n_autotoc_md8}{}\doxysection{\texorpdfstring{Phase 3 — Algorithmic alignment and control flow stability}{Phase 3 — Algorithmic alignment and control flow stability}}\label{md__g_e_o_k_e_r___p_l_a_n_autotoc_md8}
+Goal\+: ensure both implementations traverse identical branches and iteration counts.
+
+1) Carlson elliptic integrals path
+\begin{DoxyItemize}
+\item Ensure both CPU and GPU call the same source for Carlson RF/\+RC/\+RD/\+RJ with identical iteration limits and termination criteria.
+\item Use the shared math primitives for all steps to lock rounding and sequence.
+\end{DoxyItemize}
+
+2) Iterative solvers / steppers
+\begin{DoxyItemize}
+\item Fix maximum iteration counts and stopping conditions identically.
+\item Avoid early‑exit conditions that depend on sub‑\+ULP differences; compare against centralized epsilons.
+\end{DoxyItemize}
+
+3) Summations and reductions
+\begin{DoxyItemize}
+\item Replace naive accumulation with Kahan or Neumaier compensated summation on both sides if accumulation length \texorpdfstring{$>$}{>} O(10\texorpdfstring{$^\wedge$}{\string^}3).
+\item Keep summation order fixed (no parallel tree reductions in validated code paths).
+\end{DoxyItemize}
+
+Exit criteria\+: trace logs of branch decisions (optional debug mode) show identical sequences CPU vs GPU for representative cases.
+
+\DoxyHorRuler{0}
+\hypertarget{md__g_e_o_k_e_r___p_l_a_n_autotoc_md10}{}\doxysection{\texorpdfstring{Phase 4 — Validator\+: bit‑exact mode and diagnostics}{Phase 4 — Validator\+: bit‑exact mode and diagnostics}}\label{md__g_e_o_k_e_r___p_l_a_n_autotoc_md10}
+1) Re‑enable and enforce ULP checks
+\begin{DoxyItemize}
+\item Set {\ttfamily max\+\_\+ulps = 0} for bit‑exact runs; set {\ttfamily atol = rtol = 0} and {\ttfamily quant\+\_\+lsb = 0}.
+\item Add a CLI preset in {\ttfamily gkval\+\_\+cli} (e.\+g., {\ttfamily -\/-\/profile bitexact}) that configures the manifest accordingly.
+\end{DoxyItemize}
+
+2) Mismatch forensics
+\begin{DoxyItemize}
+\item On first mismatch, dump\+:
+\begin{DoxyItemize}
+\item sample index, field, {\ttfamily a\+\_\+bits}, {\ttfamily b\+\_\+bits}, {\ttfamily a\+\_\+hex}, {\ttfamily b\+\_\+hex}, ULP distance.
+\item optional\+: a compact provenance record (which high‑level function produced the value) via tagged checkpoints in code.
+\end{DoxyItemize}
+\end{DoxyItemize}
+
+3) Reproducibility gate
+\begin{DoxyItemize}
+\item Add a CI job on the target runner that builds CPU and GPU in deterministic mode and runs the validator. Failing parity blocks merges to main.
+\end{DoxyItemize}
+
+\DoxyHorRuler{0}
+\hypertarget{md__g_e_o_k_e_r___p_l_a_n_autotoc_md12}{}\doxysection{\texorpdfstring{Phase 5 — Performance recapture (post‑parity)}{Phase 5 — Performance recapture (post‑parity)}}\label{md__g_e_o_k_e_r___p_l_a_n_autotoc_md12}
+
+\begin{DoxyItemize}
+\item Gradually re‑enable optimizations that don’t change results (prove with validator)\+:
+\begin{DoxyItemize}
+\item Allow explicit {\ttfamily fma\+\_\+rn} where mathematically equivalent; keep same on CPU using {\ttfamily fma}.
+\item Evaluate {\ttfamily -\/Xptxas} optimizations that preserve rounding (validate each change).
+\item Consider mixed precision only for non‑validated paths.
+\end{DoxyItemize}
+\end{DoxyItemize}
+
+\DoxyHorRuler{0}
+\hypertarget{md__g_e_o_k_e_r___p_l_a_n_autotoc_md14}{}\doxysection{\texorpdfstring{Work breakdown and timeline (first pass)}{Work breakdown and timeline (first pass)}}\label{md__g_e_o_k_e_r___p_l_a_n_autotoc_md14}
+Week 1
+\begin{DoxyItemize}
+\item Implement deterministic build targets (Makefile updates for flags above).
+\item Re‑enable ULP check and add bit‑exact profile in validator.
+\item Add math layer scaffolding and micro‑tests (CPU vs GPU) for +, −, ×, ÷, fma, sqrt.
+\end{DoxyItemize}
+
+Week 2
+\begin{DoxyItemize}
+\item Port Carlson integrals to use math layer; replace literals with hex‑floats.
+\item Instrument branch traces (debug) and align iteration thresholds.
+\item Achieve bit‑exact on a single end‑to‑end case with reduced grid.
+\end{DoxyItemize}
+
+Week 3
+\begin{DoxyItemize}
+\item Scale to full test suite; address any residual mismatches with targeted diffs.
+\item Add CI gate and documentation. Start performance recapture experiments.
+\end{DoxyItemize}
+
+\DoxyHorRuler{0}
+\hypertarget{md__g_e_o_k_e_r___p_l_a_n_autotoc_md16}{}\doxysection{\texorpdfstring{Makefile notes (to implement)}{Makefile notes (to implement)}}\label{md__g_e_o_k_e_r___p_l_a_n_autotoc_md16}
+CPU (reference)\+:
+\begin{DoxyItemize}
+\item CFLAGS (add)\+: {\ttfamily -\/O2 -\/fno-\/fast-\/math -\/fno-\/associative-\/math -\/fno-\/unsafe-\/math-\/optimizations -\/ffp-\/contract=off -\/fexcess-\/precision=standard -\/frounding-\/math -\/mfpmath=sse -\/msse2}
+\end{DoxyItemize}
+
+CUDA\+:
+\begin{DoxyItemize}
+\item NVCC flags (device)\+: {\ttfamily -\/-\/fmad=false -\/-\/prec-\/div=true -\/-\/prec-\/sqrt=true -\/ftz=false -\/arch=sm\+\_\+\+XX -\/code=sm\+\_\+\+XX}
+\item NVCC host pass‐through\+: add CPU flags via {\ttfamily -\/Xcompiler} as appropriate.
+\end{DoxyItemize}
+
+Validator bit‑exact preset\+:
+\begin{DoxyItemize}
+\item {\ttfamily atol=0}, {\ttfamily rtol=0}, {\ttfamily max\+\_\+ulps=0}, {\ttfamily quant\+\_\+lsb=0}, grid unchanged.
+\end{DoxyItemize}
+
+\DoxyHorRuler{0}
+\hypertarget{md__g_e_o_k_e_r___p_l_a_n_autotoc_md18}{}\doxysection{\texorpdfstring{Risks and mitigations}{Risks and mitigations}}\label{md__g_e_o_k_e_r___p_l_a_n_autotoc_md18}
+
+\begin{DoxyItemize}
+\item Libm vs libdevice differences\+: mitigate by using our shared math layer and avoiding generic libm/libdevice in validated paths.
+\item Subnormal/rounding behavior\+: enforce via flags ({\ttfamily -\/ftz=false}, SSE DAZ/\+FTZ off) and wrappers.
+\item Compiler re‑association\+: disabled via flags and by explicit parentheses and {\ttfamily ffp-\/contract=off}.
+\item Hardware variance\+: start with one SM; later add per‑\+SM golden baselines and/or per‑\+SM builds.
+\item Effort creep for transcendentals\+: minimize by avoiding them or isolating to a small, shared implementation.
+\end{DoxyItemize}
+
+\DoxyHorRuler{0}
+\hypertarget{md__g_e_o_k_e_r___p_l_a_n_autotoc_md20}{}\doxysection{\texorpdfstring{Definition of Done (bit‑exact)}{Definition of Done (bit‑exact)}}\label{md__g_e_o_k_e_r___p_l_a_n_autotoc_md20}
+
+\begin{DoxyItemize}
+\item Validator run in bit‑exact mode passes across all selected cases and fields with ULP=0 and zero tolerances.
+\item Repeatable across reruns on the locked target machine and SM.
+\item CI job enforces the above on every change. 
+\end{DoxyItemize}

@@ -115,13 +115,12 @@ __device__ inline void atomicMaxFloat(float* addr, float val) {
 // (Kerr derivatives/integrator provided by headers)
 
 // Kerr-aware render kernel
-__global__ void renderKernel(int width, int height, int y0, int tile_h, int spp,
+__global__ void renderKernel(int width, int height, int y0, int tile_h, int spp, int sample_offset,
                              float mass, float spin_a_over_M, float r_cam_Rs, float theta_cam, float phi_cam,
                              float fov_y_deg, int check_inv, int integrator_mode, int camera_mode,
-                             float exposure_scale, float gamma_val, int tonemap_mode,
                              int bg_mode, float bg_sigma_rad, float bg_peak,
                              int disk_on, float disk_gain, int disk_max_orders,
-                             float* inv_max3, uchar3* out_tile) {
+                             float* inv_max3, float3* out_tile) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int tileN = width * tile_h;
     if (idx >= tileN) return;
@@ -141,20 +140,21 @@ __global__ void renderKernel(int width, int height, int y0, int tile_h, int spp,
 
     float3 accum = make_float3(0,0,0);
     for (int s = 0; s < spp; ++s) {
+        unsigned sample_id = (unsigned)(sample_offset + s);
         // Subpixel jitter
-        float jx = rnd01((unsigned)(x*73856093u ^ y*19349663u ^ s*83492791u)) - 0.5f;
-        float jy = rnd01((unsigned)(x*83492791u ^ y*2654435761u ^ s*19349663u)) - 0.5f;
+        float jx = rnd01((unsigned)(x*73856093u ^ y*19349663u ^ sample_id*83492791u)) - 0.5f;
+        float jy = rnd01((unsigned)(x*83492791u ^ y*2654435761u ^ sample_id*19349663u)) - 0.5f;
 
         float ndc_x = ((x + 0.5f + jx) / (float)width) * 2.0f - 1.0f;
         float ndc_y = ((y + 0.5f + jy) / (float)height) * 2.0f - 1.0f;
         float cam_x = ndc_x * aspect * tan_half;
         float cam_y = -ndc_y * tan_half;
-        float cam_z = -1.0f; // forward points toward -r in back-tracing (we integrate with negative step)
+        float cam_z = -1.0f; // forward points toward -r (toward the BH)
         float norm = rsqrtf(cam_x*cam_x + cam_y*cam_y + cam_z*cam_z);
         cam_x *= norm; cam_y *= norm; cam_z *= norm;
 
         // Camera basis
-        float n_r = -cam_z;
+        float n_r = cam_z;
         float n_theta = cam_y;
         float n_phi = cam_x;
 
@@ -180,16 +180,29 @@ __global__ void renderKernel(int width, int height, int y0, int tile_h, int spp,
         const double rout = 20.0 * (double)Rs;
         
         double r_far = (double)r_cam + 10.0 * (double)Rs; // travel well past camera radius
+        double h_adapt = 0.0;
         for (int step = 0; step < MAX_INTEGRATION_STEPS; ++step) {
             double scale = fmin(fmax(1.0, state.r / (0.5 * (double)Rs)), 100.0);
             bool ok = false;
             if (integrator_mode == 1) {
-                double h = (double)INTEGRATION_STEP_SIZE * scale;
+                double h_base = (double)INTEGRATION_STEP_SIZE * scale;
+                h_base = fmin(fmax(h_base, BH_RK_HMIN), BH_RK_HMAX);
+                double h = (h_adapt > 0.0) ? h_adapt : h_base;
                 h = fmin(fmax(h, BH_RK_HMIN), BH_RK_HMAX);
-                // Perform one accepted adaptive step (may shrink h internally)
-                double h_try = h;
-                double fac = rk4_adaptive_step_d(state, (double)M, (double)a, h_try, BH_RK_REL_TOL, BH_RK_ABS_TOL);
-                ok = (fac >= 0.0); // accepted
+                // Perform one accepted adaptive step (retry on rejection)
+                for (int attempt = 0; attempt < 8; ++attempt) {
+                    double h_try = h;
+                    double fac = rk4_adaptive_step_d(state, (double)M, (double)a, h_try, BH_RK_REL_TOL, BH_RK_ABS_TOL);
+                    if (fac > 0.0) {
+                        ok = true;
+                        h_adapt = fmin(fmax(h_try * fac, BH_RK_HMIN), BH_RK_HMAX);
+                        break;
+                    }
+                    h = fmax(h_try, BH_RK_HMIN);
+                    if (h <= BH_RK_HMIN * 1.01) {
+                        break;
+                    }
+                }
             } else {
                 ok = integrateGeodesicKerrD(state, (double)M, (double)a, (double)INTEGRATION_STEP_SIZE * scale);
             }
@@ -217,7 +230,7 @@ __global__ void renderKernel(int width, int height, int y0, int tile_h, int spp,
                         disk_rgb.y += c.y * disk_gain;
                         disk_rgb.z += c.z * disk_gain;
                         orders++;
-                        if (check_inv) {
+                        if (check_inv && inv_max3) {
                             double gtt, gtphi, gphiphi, grr, gthth;
                             kerr_blocks_contra_d((double)M, (double)a, cross.r, cross.theta, gtt, gtphi, gphiphi, grr, gthth);
                             double Hc = 0.5*(gtt*cross.pt*cross.pt + 2.0*gtphi*cross.pt*cross.pphi + gphiphi*cross.pphi*cross.pphi
@@ -278,7 +291,7 @@ __global__ void renderKernel(int width, int height, int y0, int tile_h, int spp,
                         disk_rgb.y += c.y * disk_gain;
                         disk_rgb.z += c.z * disk_gain;
                         orders++;
-                        if (check_inv) {
+                        if (check_inv && inv_max3) {
                             float Hc = (a == 0.0f) ? hamiltonian_schwarzschild(cross, Rs) : hamiltonian_kerr(cross, M, a);
                             float Habs = fabsf(Hc);
                             float Erel = fabsf(cross.pt - pt0) / fmaxf(1e-9f, fabsf(pt0));
@@ -311,7 +324,7 @@ __global__ void renderKernel(int width, int height, int y0, int tile_h, int spp,
         } else if (orders > 0 && disk_on) {
             color = disk_rgb;
         } else {
-            if (check_inv) {
+            if (check_inv && inv_max3) {
                 #if BH_FP64_GEODESIC
                 double gtt, gtphi, gphiphi, grr, gthth;
                 kerr_blocks_contra_d((double)M, (double)a, state.r, state.theta, gtt, gtphi, gphiphi, grr, gthth);
@@ -347,27 +360,7 @@ __global__ void renderKernel(int width, int height, int y0, int tile_h, int spp,
 
         accum.x += color.x; accum.y += color.y; accum.z += color.z;
     }
-    float inv = 1.0f / (float)spp;
-    float3 color = make_float3(accum.x * inv, accum.y * inv, accum.z * inv);
-    // Apply exposure (scale = 2^EV)
-    color.x *= exposure_scale; color.y *= exposure_scale; color.z *= exposure_scale;
-    // Optional tonemapping (1 = Reinhard)
-    if (tonemap_mode == 1) {
-        color.x = color.x / (1.0f + color.x);
-        color.y = color.y / (1.0f + color.y);
-        color.z = color.z / (1.0f + color.z);
-    }
-    // Gamma encode from linear
-    if (fabsf(gamma_val - 1.0f) > 1e-6f) {
-        float inv_g = 1.0f / fmaxf(1e-6f, gamma_val);
-        color.x = powf(fmaxf(color.x, 0.0f), inv_g);
-        color.y = powf(fmaxf(color.y, 0.0f), inv_g);
-        color.z = powf(fmaxf(color.z, 0.0f), inv_g);
-    }
-    color = make_float3_clamped(color.x, color.y, color.z);
-    out_tile[idx] = make_uchar3((unsigned char)(255.0f * color.x),
-                                (unsigned char)(255.0f * color.y),
-                                (unsigned char)(255.0f * color.z));
+    out_tile[idx] = accum;
 }
 
 static bool write_ppm(const char* path, int w, int h, const std::vector<unsigned char>& rgb) {
@@ -377,6 +370,22 @@ static bool write_ppm(const char* path, int w, int h, const std::vector<unsigned
     size_t wrote = fwrite(rgb.data(), 1, rgb.size(), f);
     fclose(f);
     return wrote == rgb.size();
+}
+
+static bool validate_out_pattern(const char* pat) {
+    if (!pat) return false;
+    int count = 0;
+    for (const char* p = pat; *p; ++p) {
+        if (*p != '%') continue;
+        ++p;
+        if (*p == '\0') return false;
+        if (*p == '%') continue;
+        if (*p == '-') ++p;
+        while (*p >= '0' && *p <= '9') ++p;
+        if (*p != 'd') return false;
+        count++;
+    }
+    return count == 1;
 }
 
 static void parse_args(int argc, char** argv, RenderParams& p) {
@@ -419,6 +428,51 @@ int main(int argc, char** argv) {
     RenderParams params;
     parse_args(argc, argv, params);
 
+    if (params.width <= 0 || params.height <= 0) {
+        std::fprintf(stderr, "Invalid image dimensions.\n");
+        return 1;
+    }
+    if (params.tile_h <= 0) {
+        std::fprintf(stderr, "Invalid tile height.\n");
+        return 1;
+    }
+    if (params.tile_h > params.height) {
+        params.tile_h = params.height;
+    }
+    if (params.samples <= 0) {
+        std::fprintf(stderr, "Invalid samples per pixel.\n");
+        return 1;
+    }
+    if (params.spp_total < 0) {
+        std::fprintf(stderr, "Invalid total spp.\n");
+        return 1;
+    }
+    if (params.frames <= 0) {
+        std::fprintf(stderr, "Invalid frame count.\n");
+        return 1;
+    }
+    if (params.mass <= 0.0f || params.r_cam <= 0.0f) {
+        std::fprintf(stderr, "Invalid mass or camera radius.\n");
+        return 1;
+    }
+    if (fabsf(params.spin) >= 1.0f) {
+        std::fprintf(stderr, "Spin must satisfy |a/M| < 1.\n");
+        return 1;
+    }
+    if (params.fov_y_deg <= 0.0f || params.fov_y_deg >= 179.0f) {
+        std::fprintf(stderr, "Invalid FOV; expected (0, 179) degrees.\n");
+        return 1;
+    }
+
+    // Derive modes early so allocations match invariant tracking.
+    auto tolower_str = [](std::string s){ for (auto& c: s) c = (char)tolower(c); return s; };
+    std::string mode = tolower_str(params.mode ? std::string(params.mode) : std::string("balanced"));
+    int integrator_mode_host = 0; // 0=fixed, 1=adaptive
+    int camera_mode_host = 0;     // 0=static,1=ZAMO
+    if (mode == "accurate") { integrator_mode_host = 1; camera_mode_host = 1; params.check_invariants = 1; }
+    else if (mode == "fast") { integrator_mode_host = 0; camera_mode_host = 0; }
+    else { integrator_mode_host = 0; camera_mode_host = 0; }
+
     int device_count = 0; cudaGetDeviceCount(&device_count);
     if (device_count <= 0) {
         std::fprintf(stderr, "No CUDA devices found.\n");
@@ -433,13 +487,13 @@ int main(int argc, char** argv) {
     // Allocate reusable resources once
     const int tile_h = params.tile_h;
     const size_t tileN = (size_t)params.width * (size_t)tile_h;
-    uchar3* d_tile[2] = {nullptr, nullptr};
-    unsigned char* h_tile[2] = {nullptr, nullptr};
+    float3* d_tile[2] = {nullptr, nullptr};
+    float3* h_tile[2] = {nullptr, nullptr};
     cudaStream_t stream[2] = {nullptr, nullptr};
     float* d_inv[2] = {nullptr, nullptr};
     for (int i = 0; i < 2; ++i) {
-        cudaMalloc(&d_tile[i], tileN * sizeof(uchar3));
-        cudaHostAlloc((void**)&h_tile[i], tileN * 3, cudaHostAllocDefault);
+        cudaMalloc(&d_tile[i], tileN * sizeof(float3));
+        cudaHostAlloc((void**)&h_tile[i], tileN * sizeof(float3), cudaHostAllocDefault);
         cudaStreamCreate(&stream[i]);
         if (params.check_invariants) {
             cudaMalloc(&d_inv[i], 3 * sizeof(float));
@@ -450,15 +504,6 @@ int main(int argc, char** argv) {
     int minGrid = 0, blockSize = 0;
     cudaOccupancyMaxPotentialBlockSize(&minGrid, &blockSize, renderKernel, 0, 0);
     if (blockSize <= 0) blockSize = 256;
-
-    // Derive modes
-    auto tolower_str = [](std::string s){ for (auto& c: s) c = (char)tolower(c); return s; };
-    std::string mode = tolower_str(params.mode ? std::string(params.mode) : std::string("balanced"));
-    int integrator_mode_host = 0; // 0=fixed, 1=adaptive
-    int camera_mode_host = 0;     // 0=static,1=ZAMO
-    if (mode == "accurate") { integrator_mode_host = 1; camera_mode_host = 1; params.check_invariants = 1; }
-    else if (mode == "fast") { integrator_mode_host = 0; camera_mode_host = 0; }
-    else { integrator_mode_host = 0; camera_mode_host = 0; }
 
     // Tone mapping / gamma / exposure parameters
     std::string tonemap_s = tolower_str(params.tonemap ? std::string(params.tonemap) : std::string("none"));
@@ -497,14 +542,13 @@ int main(int argc, char** argv) {
                     // integrator_mode: 0=fixed RK4, 1=adaptive; camera_mode: 0=static, 1=ZAMO (host decides)
                     int integrator_mode = integrator_mode_host;
                     int camera_mode = camera_mode_host;
-                    renderKernel<<<grid, block, 0, stream[buf]>>>(params.width, params.height, y0, tile_h, pass_spp,
+                    renderKernel<<<grid, block, 0, stream[buf]>>>(params.width, params.height, y0, tile_h, pass_spp, spp_done,
                                                                  params.mass, params.spin, params.r_cam, theta_cam, phi_cam,
                                                                  params.fov_y_deg, params.check_invariants, integrator_mode, camera_mode,
-                                                                 exposure_scale_host, gamma_host, tonemap_mode_host,
                                                                  bg_mode_host, bg_sigma_rad_host, bg_peak_host,
                                                                  disk_on_host, disk_gain_host, disk_max_orders_host,
                                                                  d_inv[buf], d_tile[buf]);
-                    cudaMemcpyAsync(h_tile[buf], d_tile[buf], thisN * sizeof(uchar3), cudaMemcpyDeviceToHost, stream[buf]);
+                    cudaMemcpyAsync(h_tile[buf], d_tile[buf], thisN * sizeof(float3), cudaMemcpyDeviceToHost, stream[buf]);
                 }
                 if (t > 0) {
                     int prev = (t - 1) % 2;
@@ -523,14 +567,12 @@ int main(int argc, char** argv) {
                     for (int row = 0; row < prev_h; ++row) {
                         int y = prev_y0 + row;
                         size_t base_img = (size_t)y * params.width * 3;
-                        size_t base_tile = (size_t)row * params.width * 3;
+                        size_t base_tile = (size_t)row * params.width;
                         for (int x = 0; x < params.width; ++x) {
-                            unsigned char r = h_tile[prev][base_tile + 3*x + 0];
-                            unsigned char g = h_tile[prev][base_tile + 3*x + 1];
-                            unsigned char b = h_tile[prev][base_tile + 3*x + 2];
-                            accum[base_img + 3*x + 0] += (float)r / 255.0f;
-                            accum[base_img + 3*x + 1] += (float)g / 255.0f;
-                            accum[base_img + 3*x + 2] += (float)b / 255.0f;
+                            float3 pix = h_tile[prev][base_tile + x];
+                            accum[base_img + 3*x + 0] += pix.x;
+                            accum[base_img + 3*x + 1] += pix.y;
+                            accum[base_img + 3*x + 2] += pix.z;
                         }
                     }
                 }
@@ -541,9 +583,24 @@ int main(int argc, char** argv) {
                 std::vector<unsigned char> out((size_t)params.width * params.height * 3);
                 float inv = 1.0f / (float)spp_done;
                 for (size_t i = 0, n = out.size()/3; i < n; ++i) {
-                    float r = fminf(fmaxf(accum[3*i + 0] * inv, 0.0f), 1.0f);
-                    float g = fminf(fmaxf(accum[3*i + 1] * inv, 0.0f), 1.0f);
-                    float b = fminf(fmaxf(accum[3*i + 2] * inv, 0.0f), 1.0f);
+                    float r = accum[3*i + 0] * inv;
+                    float g = accum[3*i + 1] * inv;
+                    float b = accum[3*i + 2] * inv;
+                    r *= exposure_scale_host; g *= exposure_scale_host; b *= exposure_scale_host;
+                    if (tonemap_mode_host == 1) {
+                        r = r / (1.0f + r);
+                        g = g / (1.0f + g);
+                        b = b / (1.0f + b);
+                    }
+                    if (fabsf(gamma_host - 1.0f) > 1e-6f) {
+                        float inv_g = 1.0f / fmaxf(1e-6f, gamma_host);
+                        r = powf(fmaxf(r, 0.0f), inv_g);
+                        g = powf(fmaxf(g, 0.0f), inv_g);
+                        b = powf(fmaxf(b, 0.0f), inv_g);
+                    }
+                    r = fminf(fmaxf(r, 0.0f), 1.0f);
+                    g = fminf(fmaxf(g, 0.0f), 1.0f);
+                    b = fminf(fmaxf(b, 0.0f), 1.0f);
                     out[3*i + 0] = (unsigned char)(255.0f * r);
                     out[3*i + 1] = (unsigned char)(255.0f * g);
                     out[3*i + 2] = (unsigned char)(255.0f * b);
@@ -566,6 +623,10 @@ int main(int argc, char** argv) {
         if (!render_one(phi0, params.out_path)) return 1;
         std::printf("Wrote %s\n", params.out_path);
     } else {
+        if (!validate_out_pattern(params.out_pat)) {
+            std::fprintf(stderr, "Invalid --outpat (expected a single %%d-like specifier).\n");
+            return 1;
+        }
         for (int i = 0; i < params.frames; ++i) {
             float t = (float)i / (float)params.frames;
             float phi = phi0 + 2.0f * PI_F * params.turns * t;

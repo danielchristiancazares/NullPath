@@ -145,7 +145,8 @@ void gkval_print_progress(const gkval_session_t* session);
 
 // Create fail window around first failure
 int gkval_create_fail_window(gkval_session_t* session, uint64_t case_id,
-                            gkval_field_t field, uint64_t fail_index,
+                            gkval_field_t field, uint64_t segment_start,
+                            uint64_t fail_index_local,
                             const double* geokerr_data, const double* port_data,
                             uint64_t data_len);
 

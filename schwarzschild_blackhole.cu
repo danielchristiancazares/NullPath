@@ -8,72 +8,15 @@
 #include <vector>
 #include <chrono>
 #include <cstring>
+#include <cstdlib>
 
 // Centralized constants and shared types
 #include "include/bh_common.h"
 #include "include/bh_types.h"
+#include "include/bh_schwarzschild.h"
 
 // (Types moved to include/bh_types.h)
 
-// Geodesic equations of motion in Schwarzschild spacetime
-__device__
-void computeGeodesicDerivatives(const GeodesicState& state, const SchwarzschildMetric& metric, 
-                               GeodesicState& derivatives) {
-    float r = state.r;
-    float theta = state.theta;
-    float Rs = metric.Rs;
-    
-    // Avoid singularities
-    if (r <= Rs + 0.001f || r <= 0.001f) {
-        // Inside event horizon or at singularity - trajectory ends
-        derivatives = GeodesicState();
-        return;
-    }
-    
-    float sin_theta = sinf(theta);
-    float cos_theta = cosf(theta);
-    float r2 = r * r;
-    float r3 = r2 * r;
-    float A = 1.0f - Rs / r; // g_rr^{-1} = g^{rr}
-
-    // Hamiltonian form: dx^μ/dλ = g^{μν} p_ν
-    // dt/dλ = g^{tt} p_t = (-1/A) * p_t
-    derivatives.t = (-1.0f / A) * state.pt;
-
-    // dr/dλ = g^{rr} p_r = A * p_r
-    derivatives.r = A * state.pr;
-
-    // dθ/dλ = g^{θθ} p_θ = (1/r^2) * p_θ
-    derivatives.theta = state.ptheta / r2;
-
-    // dφ/dλ = g^{φφ} p_φ = (1/(r^2 sin^2θ)) * p_φ
-    derivatives.phi = state.pphi / (r2 * fmaxf(1e-12f, sin_theta * sin_theta));
-
-    // 4-momentum derivatives: dp_μ/dλ = -½ ∂_μ g^{αβ} p_α p_β
-    derivatives.pt = 0.0f; // t is cyclic (metric independent of t)
-
-    // r-derivatives of inverse metric components
-    float sin2 = fmaxf(1e-12f, sin_theta * sin_theta);
-    float dgtt_inv_dr = Rs / (r2 * A * A);               // ∂_r g^{tt}
-    float dgrr_inv_dr = Rs / (r2);                       // ∂_r g^{rr}
-    float dgthth_inv_dr = -2.0f / (r3);                  // ∂_r g^{θθ}
-    float dgphph_inv_dr = -2.0f / (r3 * sin2);           // ∂_r g^{φφ}
-
-    derivatives.pr = -0.5f * (
-        dgtt_inv_dr   * state.pt     * state.pt +
-        dgrr_inv_dr   * state.pr     * state.pr +
-        dgthth_inv_dr * state.ptheta * state.ptheta +
-        dgphph_inv_dr * state.pphi   * state.pphi
-    );
-
-    // θ-momentum: only g^{φφ} depends on θ
-    // Protect sin^3(theta) in denominator with sign-preserving clamp
-    float sin_theta_safe = (fabsf(sin_theta) < 1e-6f) ? (sin_theta >= 0.0f ? 1e-6f : -1e-6f) : sin_theta;
-    derivatives.ptheta = (cos_theta / (r2 * sin2 * sin_theta_safe)) * state.pphi * state.pphi;
-
-    // φ is cyclic
-    derivatives.pphi = 0.0f;
-}
 
 // Analytic turning radius r_min(b) for Schwarzschild equatorial photons
 // Solves r^3 - b^2 r + b^2 Rs = 0 using trigonometric closed form.
@@ -93,73 +36,13 @@ __device__ __host__ inline bool schwarzschild_rmin_analytic(float Rs, float b, f
     return isfinite(*rmin_out) && *rmin_out > Rs;
 }
 
-// 4th order Runge-Kutta integration for geodesics
-__device__
-bool integrateGeodesic(GeodesicState& state, const SchwarzschildMetric& metric, 
-                      float step_size) {
-    GeodesicState k1, k2, k3, k4;
-    GeodesicState temp_state;
-    
-    // k1 = f(state)
-    computeGeodesicDerivatives(state, metric, k1);
-    
-    // k2 = f(state + 0.5*h*k1)
-    temp_state.t = state.t + 0.5f * step_size * k1.t;
-    temp_state.r = state.r + 0.5f * step_size * k1.r;
-    temp_state.theta = state.theta + 0.5f * step_size * k1.theta;
-    temp_state.phi = state.phi + 0.5f * step_size * k1.phi;
-    temp_state.pt = state.pt + 0.5f * step_size * k1.pt;
-    temp_state.pr = state.pr + 0.5f * step_size * k1.pr;
-    temp_state.ptheta = state.ptheta + 0.5f * step_size * k1.ptheta;
-    temp_state.pphi = state.pphi + 0.5f * step_size * k1.pphi;
-    
-    computeGeodesicDerivatives(temp_state, metric, k2);
-    
-    // k3 = f(state + 0.5*h*k2)
-    temp_state.t = state.t + 0.5f * step_size * k2.t;
-    temp_state.r = state.r + 0.5f * step_size * k2.r;
-    temp_state.theta = state.theta + 0.5f * step_size * k2.theta;
-    temp_state.phi = state.phi + 0.5f * step_size * k2.phi;
-    temp_state.pt = state.pt + 0.5f * step_size * k2.pt;
-    temp_state.pr = state.pr + 0.5f * step_size * k2.pr;
-    temp_state.ptheta = state.ptheta + 0.5f * step_size * k2.ptheta;
-    temp_state.pphi = state.pphi + 0.5f * step_size * k2.pphi;
-    
-    computeGeodesicDerivatives(temp_state, metric, k3);
-    
-    // k4 = f(state + h*k3)
-    temp_state.t = state.t + step_size * k3.t;
-    temp_state.r = state.r + step_size * k3.r;
-    temp_state.theta = state.theta + step_size * k3.theta;
-    temp_state.phi = state.phi + step_size * k3.phi;
-    temp_state.pt = state.pt + step_size * k3.pt;
-    temp_state.pr = state.pr + step_size * k3.pr;
-    temp_state.ptheta = state.ptheta + step_size * k3.ptheta;
-    temp_state.pphi = state.pphi + step_size * k3.pphi;
-    
-    computeGeodesicDerivatives(temp_state, metric, k4);
-    
-    // Update state: state = state + h/6 * (k1 + 2*k2 + 2*k3 + k4)
-    float h_6 = step_size / 6.0f;
-    state.t += h_6 * (k1.t + 2.0f*k2.t + 2.0f*k3.t + k4.t);
-    state.r += h_6 * (k1.r + 2.0f*k2.r + 2.0f*k3.r + k4.r);
-    state.theta += h_6 * (k1.theta + 2.0f*k2.theta + 2.0f*k3.theta + k4.theta);
-    state.phi += h_6 * (k1.phi + 2.0f*k2.phi + 2.0f*k3.phi + k4.phi);
-    state.pt += h_6 * (k1.pt + 2.0f*k2.pt + 2.0f*k3.pt + k4.pt);
-    state.pr += h_6 * (k1.pr + 2.0f*k2.pr + 2.0f*k3.pr + k4.pr);
-    state.ptheta += h_6 * (k1.ptheta + 2.0f*k2.ptheta + 2.0f*k3.ptheta + k4.ptheta);
-    state.pphi += h_6 * (k1.pphi + 2.0f*k2.pphi + 2.0f*k3.pphi + k4.pphi);
-    
-    // Check for termination conditions (allow r to grow beyond start to detect escape)
-    return (state.r > metric.Rs + 0.001f &&
-            state.theta > 0.001f && state.theta < PI_F - 0.001f);
-}
+// Schwarzschild geodesic integration lives in include/bh_schwarzschild.h
 
 // (GeodesicLookupTable moved to include/bh_types.h)
 
 // CUDA kernel to precompute geodesic deflection data
 __global__ 
-void precomputeGeodesicsKernel(float mass, float* impact_parameters, 
+void precomputeGeodesicsKernel(float mass, float r_start, float* impact_parameters, 
                               float* deflection_angles, float* closest_approaches,
                               int* ray_status, int num_rays) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -170,7 +53,7 @@ void precomputeGeodesicsKernel(float mass, float* impact_parameters,
     
     // Initialize geodesic for light ray from infinity
     GeodesicState state;
-    state.r = 1000.0f;  // Start from "infinity"
+    state.r = r_start;  // Start from "infinity"
     state.theta = PI_F / 2.0f;  // Equatorial plane
     state.phi = 0.0f;
     state.t = 0.0f;
@@ -227,7 +110,7 @@ void precomputeGeodesicsKernel(float mass, float* impact_parameters,
         prev_phi = state.phi;
         
         // Check if ray escaped to infinity
-        if (state.r > 1001.0f && state.pr > 0) {
+        if (state.r > r_start + 1.0f && state.pr > 0) {
             escaped = true;
             break;
         }
@@ -244,7 +127,7 @@ void precomputeGeodesicsKernel(float mass, float* impact_parameters,
     }
     closest_approaches[idx] = rmin_out;
     
-    if (escaped || (state.r > 1001.0f && state.pr > 0)) {
+    if (escaped || (state.r > r_start + 1.0f && state.pr > 0)) {
         ray_status[idx] = 0; // Escaped to infinity (definitive)
     } else if (state.r <= metric.Rs + 0.01f) {
         ray_status[idx] = 1; // Captured by black hole
@@ -258,6 +141,10 @@ void precomputeGeodesicsKernel(float mass, float* impact_parameters,
 // Host function to precompute geodesic lookup table
 GeodesicLookupTable* precomputeGeodesics(float mass, int num_rays) {
     printf("Precomputing %d geodesics for black hole mass %.2f...\n", num_rays, mass);
+    if (num_rays < 2) {
+        std::fprintf(stderr, "num_rays must be >= 2.\n");
+        return nullptr;
+    }
     // Reference values for comparison and GeoKerr alignment
     const float Rs = SCHWARZSCHILD_MULTIPLIER * mass;
     const float bcrit_Rs = bh_bcrit_from_Rs(Rs);
@@ -292,48 +179,63 @@ GeodesicLookupTable* precomputeGeodesics(float mass, int num_rays) {
         // Logarithmic spacing for better resolution near critical values
         h_impact_params[i] = b_min * powf(b_max / b_min, t);
     }
+
+    float r_start = 1000.0f;
+    float min_start = 1.2f * b_max;
+    if (min_start > r_start) r_start = min_start;
     
     // Allocate device memory
-    float *d_impact_params, *d_deflection_angles, *d_closest_approaches;
-    int *d_ray_status;
-    
+    float *d_impact_params = nullptr, *d_deflection_angles = nullptr, *d_closest_approaches = nullptr;
+    int *d_ray_status = nullptr;
+    auto cleanup_device = [&]() {
+        if (d_impact_params) cudaFree(d_impact_params);
+        if (d_deflection_angles) cudaFree(d_deflection_angles);
+        if (d_closest_approaches) cudaFree(d_closest_approaches);
+        if (d_ray_status) cudaFree(d_ray_status);
+    };
+
     cudaError_t err;
-    err = cudaMalloc(&d_impact_params, num_rays * sizeof(float)); if (err) { fprintf(stderr, "cudaMalloc d_impact_params failed: %s\n", cudaGetErrorString(err)); return nullptr; }
-    err = cudaMalloc(&d_deflection_angles, num_rays * sizeof(float)); if (err) { fprintf(stderr, "cudaMalloc d_deflection_angles failed: %s\n", cudaGetErrorString(err)); cudaFree(d_impact_params); return nullptr; }
-    err = cudaMalloc(&d_closest_approaches, num_rays * sizeof(float)); if (err) { fprintf(stderr, "cudaMalloc d_closest_approaches failed: %s\n", cudaGetErrorString(err)); cudaFree(d_impact_params); cudaFree(d_deflection_angles); return nullptr; }
-    err = cudaMalloc(&d_ray_status, num_rays * sizeof(int)); if (err) { fprintf(stderr, "cudaMalloc d_ray_status failed: %s\n", cudaGetErrorString(err)); cudaFree(d_impact_params); cudaFree(d_deflection_angles); cudaFree(d_closest_approaches); return nullptr; }
-    
+    err = cudaMalloc(&d_impact_params, num_rays * sizeof(float));
+    if (err) { fprintf(stderr, "cudaMalloc d_impact_params failed: %s\n", cudaGetErrorString(err)); cleanup_device(); delete table; return nullptr; }
+    err = cudaMalloc(&d_deflection_angles, num_rays * sizeof(float));
+    if (err) { fprintf(stderr, "cudaMalloc d_deflection_angles failed: %s\n", cudaGetErrorString(err)); cleanup_device(); delete table; return nullptr; }
+    err = cudaMalloc(&d_closest_approaches, num_rays * sizeof(float));
+    if (err) { fprintf(stderr, "cudaMalloc d_closest_approaches failed: %s\n", cudaGetErrorString(err)); cleanup_device(); delete table; return nullptr; }
+    err = cudaMalloc(&d_ray_status, num_rays * sizeof(int));
+    if (err) { fprintf(stderr, "cudaMalloc d_ray_status failed: %s\n", cudaGetErrorString(err)); cleanup_device(); delete table; return nullptr; }
+
     // Copy input data to device
     err = cudaMemcpy(d_impact_params, h_impact_params.data(), num_rays * sizeof(float), cudaMemcpyHostToDevice);
-    if (err) { fprintf(stderr, "cudaMemcpy H2D impact_params failed: %s\n", cudaGetErrorString(err)); }
+    if (err) { fprintf(stderr, "cudaMemcpy H2D impact_params failed: %s\n", cudaGetErrorString(err)); cleanup_device(); delete table; return nullptr; }
     
     // Launch kernel
     int block_size = 256;
     int num_blocks = (num_rays + block_size - 1) / block_size;
     
     precomputeGeodesicsKernel<<<num_blocks, block_size>>>(
-        mass, d_impact_params, d_deflection_angles, d_closest_approaches, 
+        mass, r_start, d_impact_params, d_deflection_angles, d_closest_approaches, 
         d_ray_status, num_rays);
     
     // Check for launch errors and synchronize
     cudaError_t launch_err = cudaGetLastError();
     if (launch_err != cudaSuccess) {
         fprintf(stderr, "Kernel launch failed: %s\n", cudaGetErrorString(launch_err));
+        cleanup_device(); delete table; return nullptr;
     }
-    
-    cudaDeviceSynchronize();
-    cudaError_t sync_err = cudaGetLastError();
-    if (sync_err != cudaSuccess) {
-        fprintf(stderr, "Kernel execution failed: %s\n", cudaGetErrorString(sync_err));
+
+    err = cudaDeviceSynchronize();
+    if (err != cudaSuccess) {
+        fprintf(stderr, "Kernel execution failed: %s\n", cudaGetErrorString(err));
+        cleanup_device(); delete table; return nullptr;
     }
     
     // Copy results back to host
     err = cudaMemcpy(h_deflection_angles.data(), d_deflection_angles, num_rays * sizeof(float), cudaMemcpyDeviceToHost);
-    if (err) { fprintf(stderr, "cudaMemcpy D2H deflection_angles failed: %s\n", cudaGetErrorString(err)); }
+    if (err) { fprintf(stderr, "cudaMemcpy D2H deflection_angles failed: %s\n", cudaGetErrorString(err)); cleanup_device(); delete table; return nullptr; }
     err = cudaMemcpy(h_closest_approaches.data(), d_closest_approaches, num_rays * sizeof(float), cudaMemcpyDeviceToHost);
-    if (err) { fprintf(stderr, "cudaMemcpy D2H closest_approaches failed: %s\n", cudaGetErrorString(err)); }
+    if (err) { fprintf(stderr, "cudaMemcpy D2H closest_approaches failed: %s\n", cudaGetErrorString(err)); cleanup_device(); delete table; return nullptr; }
     err = cudaMemcpy(h_ray_status.data(), d_ray_status, num_rays * sizeof(int), cudaMemcpyDeviceToHost);
-    if (err) { fprintf(stderr, "cudaMemcpy D2H ray_status failed: %s\n", cudaGetErrorString(err)); }
+    if (err) { fprintf(stderr, "cudaMemcpy D2H ray_status failed: %s\n", cudaGetErrorString(err)); cleanup_device(); delete table; return nullptr; }
     
     // Allocate and copy final results
     table->impact_parameters = new float[num_rays];
@@ -357,10 +259,7 @@ GeodesicLookupTable* precomputeGeodesics(float mass, int num_rays) {
     memcpy(table->ray_status, h_ray_status.data(), num_rays * sizeof(int));
     
     // Clean up device memory
-    cudaFree(d_impact_params);
-    cudaFree(d_deflection_angles);
-    cudaFree(d_closest_approaches);
-    cudaFree(d_ray_status);
+    cleanup_device();
     
     printf("Geodesic precomputation complete!\n");
     return table;

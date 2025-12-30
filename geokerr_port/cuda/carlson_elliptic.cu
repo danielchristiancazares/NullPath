@@ -25,11 +25,44 @@
     } \
 } while(0)
 
-// Constants for Carlson functions
-__constant__ double ERRTOL_RF = 0.08;
-__constant__ double ERRTOL_RC = 0.04; 
-__constant__ double ERRTOL_RD = 0.05;
-__constant__ double ERRTOL_RJ = 0.05;
+/* ============================================================================
+ * ERRTOL - Error Tolerance Parameters (TOMS Algorithm 577)
+ * ============================================================================
+ * Reference: Carlson & Notis, "Algorithm 577: Algorithms for Incomplete
+ *            Elliptic Integrals", ACM TOMS Vol.7 No.3, Sept 1981, pp.398-403
+ *
+ * The ERRTOL parameter controls truncation error via the duplication theorem.
+ * Iteration continues until normalized deviation from the mean falls below
+ * ERRTOL, then a Taylor series expansion completes the evaluation.
+ *
+ * TRUNCATION ERROR FORMULAS:
+ *   RF: error < ERRTOL^6 / (4 * (1 - ERRTOL))
+ *   RC: error < 16 * ERRTOL^6 / (1 - 2 * ERRTOL)
+ *   RD: error < 3 * ERRTOL^6 / (1 - ERRTOL)^(3/2)
+ *   RJ: error < 3 * ERRTOL^6 / (1 - ERRTOL)^(3/2)
+ *
+ * RECOMMENDED VALUES (from TOMS 577 documentation):
+ *
+ *   ERRTOL     RF error      RC error      RD/RJ error
+ *   -------    ----------    ----------    -----------
+ *   1.0e-3     3e-19         2e-17         4e-18
+ *   3.0e-3     2e-16         2e-14         3e-15
+ *   1.0e-2     3e-13         2e-11         4e-12
+ *   3.0e-2     2e-10         2e-08         3e-09
+ *   1.0e-1     3e-07         2e-05         4e-06
+ *
+ * For RJ, the algorithm internally uses ETOLRC = 0.5 * ERRTOL for auxiliary
+ * RC calls.
+ *
+ * CURRENT VALUES: These loose tolerances (~0.05-0.08) yield only ~7 significant
+ * figures. For high-precision geodesic work targeting 1e-10 to 1e-12 accuracy,
+ * use ERRTOL = 1.0e-3 or tighter.
+ * ============================================================================
+ */
+__constant__ double ERRTOL_RF = 1.0e-3;  // ~3e-19 truncation error
+__constant__ double ERRTOL_RC = 1.0e-3;  // ~2e-17 truncation error
+__constant__ double ERRTOL_RD = 1.0e-3;  // ~4e-18 truncation error
+__constant__ double ERRTOL_RJ = 1.0e-3;  // ~4e-18 truncation error
 
 __constant__ double TINY = 1.5e-38;
 __constant__ double BIG = 3.0e37;
@@ -240,19 +273,20 @@ __device__ double carlson_rj(double x, double y, double z, double p) {
     double fac = 1.0;
     double xt, yt, zt, pt;
     double rcx = 0.0;
-    
+    double a_cpv = 0.0, b_cpv = 0.0;  // Cauchy principal value coefficients (preserved for p < 0)
+
     if (p > 0.0) {
         xt = x;
-        yt = y; 
+        yt = y;
         zt = z;
         pt = p;
     } else {
         xt = fmin(fmin(x,y),z);
         zt = fmax(fmax(x,y),z);
         yt = x + y + z - xt - zt;
-        double a = 1.0 / (yt - p);
-        double b = a * (zt - yt) * (yt - xt);
-        pt = yt + b;
+        a_cpv = 1.0 / (yt - p);
+        b_cpv = a_cpv * (zt - yt) * (yt - xt);
+        pt = yt + b_cpv;
         double rho = xt * zt / yt;
         double tau = p * pt / yt;
         rcx = carlson_rc(rho, tau);
@@ -300,9 +334,8 @@ __device__ double carlson_rj(double x, double y, double z, double p) {
                            delp*ea*(c2 - delp*c3) - c2*delp*ec) / (ave * sqrt(ave));
             
             if (p <= 0.0) {
-                double a = 1.0 / (yt - p);
-                double b = a * (zt - yt) * (yt - xt);
-                result = a * (b * result + 3.0 * (rcx - carlson_rf(xt, yt, zt)));
+                // Use preserved a_cpv, b_cpv from original sorted arguments (not converged values)
+                result = a_cpv * (b_cpv * result + 3.0 * (rcx - carlson_rf(xt, yt, zt)));
             }
             return result;
         }
