@@ -253,9 +253,13 @@ __host__ __device__ inline float hamiltonian_kerr(const GeodesicState& s, float 
     float gtt, gtphi, gphiphi, grr, gthth;
     kerr_blocks_contra(M, a, s.r, s.theta, gtt, gtphi, gphiphi, grr, gthth);
 
-    float cross = 2.0f * gtphi * s.pt * s.pphi;
-    float H = 0.5f * (gtt * s.pt * s.pt + cross + gphiphi * s.pphi * s.pphi +
-                      grr * s.pr * s.pr + gthth * s.ptheta * s.ptheta);
+    BhKleinSum<float> sum;
+    sum.add(gtt * s.pt * s.pt);
+    sum.add(2.0f * gtphi * s.pt * s.pphi);
+    sum.add(gphiphi * s.pphi * s.pphi);
+    sum.add(grr * s.pr * s.pr);
+    sum.add(gthth * s.ptheta * s.ptheta);
+    float H = 0.5f * sum.result();
     return H;
 }
 
@@ -320,17 +324,21 @@ __device__ inline void computeGeodesicDerivativesKerr(const GeodesicState& st, f
     d.pt = 0.0f;    // Stationarity (metric independent of t)
     d.pphi = 0.0f;  // Axisymmetry (metric independent of phi)
 
-    float S_r = gtt_r     * st.pt * st.pt +
-                2.0f * gtphi_r * st.pt * st.pphi +
-                gphiphi_r * st.pphi * st.pphi +
-                grr_r     * st.pr * st.pr +
-                gthth_r   * st.ptheta * st.ptheta;
+    BhKleinSum<float> sum_r;
+    sum_r.add(gtt_r * st.pt * st.pt);
+    sum_r.add(2.0f * gtphi_r * st.pt * st.pphi);
+    sum_r.add(gphiphi_r * st.pphi * st.pphi);
+    sum_r.add(grr_r * st.pr * st.pr);
+    sum_r.add(gthth_r * st.ptheta * st.ptheta);
+    float S_r = sum_r.result();
 
-    float S_th = gtt_th    * st.pt * st.pt +
-                 2.0f * gtphi_th * st.pt * st.pphi +
-                 gphiphi_th * st.pphi * st.pphi +
-                 grr_th    * st.pr * st.pr +
-                 gthth_th  * st.ptheta * st.ptheta;
+    BhKleinSum<float> sum_th;
+    sum_th.add(gtt_th * st.pt * st.pt);
+    sum_th.add(2.0f * gtphi_th * st.pt * st.pphi);
+    sum_th.add(gphiphi_th * st.pphi * st.pphi);
+    sum_th.add(grr_th * st.pr * st.pr);
+    sum_th.add(gthth_th * st.ptheta * st.ptheta);
+    float S_th = sum_th.result();
 
     d.pr = -0.5f * S_r;
     d.ptheta = -0.5f * S_th;
@@ -374,14 +382,14 @@ __device__ inline bool integrateGeodesicKerr(GeodesicState& st, float M, float a
     computeGeodesicDerivativesKerr(tmp, M, a, k4);
 
     float h6 = h / 6.0f;
-    st.t += h6 * (k1.t + 2*k2.t + 2*k3.t + k4.t);
-    st.r += h6 * (k1.r + 2*k2.r + 2*k3.r + k4.r);
-    st.theta += h6 * (k1.theta + 2*k2.theta + 2*k3.theta + k4.theta);
-    st.phi += h6 * (k1.phi + 2*k2.phi + 2*k3.phi + k4.phi);
-    st.pt += h6 * (k1.pt + 2*k2.pt + 2*k3.pt + k4.pt);
-    st.pr += h6 * (k1.pr + 2*k2.pr + 2*k3.pr + k4.pr);
-    st.ptheta += h6 * (k1.ptheta + 2*k2.ptheta + 2*k3.ptheta + k4.ptheta);
-    st.pphi += h6 * (k1.pphi + 2*k2.pphi + 2*k3.pphi + k4.pphi);
+    st.t += h6 * bh_rk4_sum(k1.t, k2.t, k3.t, k4.t);
+    st.r += h6 * bh_rk4_sum(k1.r, k2.r, k3.r, k4.r);
+    st.theta += h6 * bh_rk4_sum(k1.theta, k2.theta, k3.theta, k4.theta);
+    st.phi += h6 * bh_rk4_sum(k1.phi, k2.phi, k3.phi, k4.phi);
+    st.pt += h6 * bh_rk4_sum(k1.pt, k2.pt, k3.pt, k4.pt);
+    st.pr += h6 * bh_rk4_sum(k1.pr, k2.pr, k3.pr, k4.pr);
+    st.ptheta += h6 * bh_rk4_sum(k1.ptheta, k2.ptheta, k3.ptheta, k4.ptheta);
+    st.pphi += h6 * bh_rk4_sum(k1.pphi, k2.pphi, k3.pphi, k4.pphi);
 
     // Termination check
     float disc = fmaxf(0.0f, M*M - a*a);
@@ -439,7 +447,11 @@ __device__ __host__ inline GeodesicState init_ray_from_camera_general(float M, f
     float ephi_t, ephi_phi;
     if (fabsf(g_tphi) > 1e-12f) {
         float beta = -g_tt / g_tphi;
-        float norm2 = g_tt + 2.0f * g_tphi * beta + g_phiphi * beta * beta;
+        BhKleinSum<float> norm2_sum;
+        norm2_sum.add(g_tt);
+        norm2_sum.add(2.0f * g_tphi * beta);
+        norm2_sum.add(g_phiphi * beta * beta);
+        float norm2 = norm2_sum.result();
         float inv = rsqrtf(fabsf(norm2) + 1e-12f);
         ephi_t = inv;
         ephi_phi = beta * inv;
@@ -503,13 +515,20 @@ __device__ inline float doppler_g_general(const GeodesicState& st, float M, floa
     float Omega = 1.0f / (a / fmaxf(BH_EPS, M) + powf(fmaxf(1.0f, r_over_M), 1.5f)) / fmaxf(BH_EPS, M);
 
     // Normalization: u_mu u^mu = -1 => u^t = 1/sqrt(-g_tt - 2*g_tphi*Omega - g_phiphi*Omega^2)
-    float denom = -(g_tt + 2.0f * g_tphi * Omega + g_phiphi * Omega * Omega);
+    BhKleinSum<float> denom_sum;
+    denom_sum.add(g_tt);
+    denom_sum.add(2.0f * g_tphi * Omega);
+    denom_sum.add(g_phiphi * Omega * Omega);
+    float denom = -denom_sum.result();
     float u_t = rsqrtf(fmaxf(BH_EPS, denom));
     float u_phi = Omega * u_t;
 
     // g = E_inf / E_em = -p_t / (-k_mu u^mu)
     float E_inf = -st.pt;
-    float k_u = -(st.pt * u_t + st.pphi * u_phi);
+    BhKleinSum<float> k_u_sum;
+    k_u_sum.add(st.pt * u_t);
+    k_u_sum.add(st.pphi * u_phi);
+    float k_u = -k_u_sum.result();
     float g = E_inf / fmaxf(1e-9f, k_u);
 
     return fmaxf(0.0f, g);
@@ -687,10 +706,21 @@ __device__ inline void computeGeodesicDerivativesKerrD(const GeodesicStateD& st,
     d.pt = 0.0;
     d.pphi = 0.0;
 
-    double S_r = gtt_r   * st.pt*st.pt + 2.0*gtphi_r * st.pt*st.pphi + gphiphi_r * st.pphi*st.pphi
-                 + grr_r * st.pr*st.pr + gthth_r * st.ptheta*st.ptheta;
-    double S_th = gtt_th  * st.pt*st.pt + 2.0*gtphi_th* st.pt*st.pphi + gphiphi_th* st.pphi*st.pphi
-                 + grr_th* st.pr*st.pr + gthth_th* st.ptheta*st.ptheta;
+    BhKleinSum<double> sum_r;
+    sum_r.add(gtt_r * st.pt * st.pt);
+    sum_r.add(2.0 * gtphi_r * st.pt * st.pphi);
+    sum_r.add(gphiphi_r * st.pphi * st.pphi);
+    sum_r.add(grr_r * st.pr * st.pr);
+    sum_r.add(gthth_r * st.ptheta * st.ptheta);
+    double S_r = sum_r.result();
+
+    BhKleinSum<double> sum_th;
+    sum_th.add(gtt_th * st.pt * st.pt);
+    sum_th.add(2.0 * gtphi_th * st.pt * st.pphi);
+    sum_th.add(gphiphi_th * st.pphi * st.pphi);
+    sum_th.add(grr_th * st.pr * st.pr);
+    sum_th.add(gthth_th * st.ptheta * st.ptheta);
+    double S_th = sum_th.result();
 
     d.pr = -0.5 * S_r;
     d.ptheta = -0.5 * S_th;
@@ -728,14 +758,14 @@ __device__ inline bool integrateGeodesicKerrD(GeodesicStateD& st, double M, doub
     computeGeodesicDerivativesKerrD(tmp, M, a, k4);
 
     double h6 = h / 6.0;
-    st.t += h6 * (k1.t + 2*k2.t + 2*k3.t + k4.t);
-    st.r += h6 * (k1.r + 2*k2.r + 2*k3.r + k4.r);
-    st.theta += h6 * (k1.theta + 2*k2.theta + 2*k3.theta + k4.theta);
-    st.phi += h6 * (k1.phi + 2*k2.phi + 2*k3.phi + k4.phi);
-    st.pt += h6 * (k1.pt + 2*k2.pt + 2*k3.pt + k4.pt);
-    st.pr += h6 * (k1.pr + 2*k2.pr + 2*k3.pr + k4.pr);
-    st.ptheta += h6 * (k1.ptheta + 2*k2.ptheta + 2*k3.ptheta + k4.ptheta);
-    st.pphi += h6 * (k1.pphi + 2*k2.pphi + 2*k3.pphi + k4.pphi);
+    st.t += h6 * bh_rk4_sum(k1.t, k2.t, k3.t, k4.t);
+    st.r += h6 * bh_rk4_sum(k1.r, k2.r, k3.r, k4.r);
+    st.theta += h6 * bh_rk4_sum(k1.theta, k2.theta, k3.theta, k4.theta);
+    st.phi += h6 * bh_rk4_sum(k1.phi, k2.phi, k3.phi, k4.phi);
+    st.pt += h6 * bh_rk4_sum(k1.pt, k2.pt, k3.pt, k4.pt);
+    st.pr += h6 * bh_rk4_sum(k1.pr, k2.pr, k3.pr, k4.pr);
+    st.ptheta += h6 * bh_rk4_sum(k1.ptheta, k2.ptheta, k3.ptheta, k4.ptheta);
+    st.pphi += h6 * bh_rk4_sum(k1.pphi, k2.pphi, k3.pphi, k4.pphi);
 
     double disc = M*M - a*a;
     if (disc < 0.0) disc = 0.0;
@@ -768,7 +798,11 @@ __device__ __host__ inline GeodesicStateD init_ray_from_camera_general_d(double 
     double ephi_t, ephi_phi;
     if (fabs(g_tphi) > BH_EPS_D) {
         double beta = -g_tt / g_tphi;
-        double norm2 = g_tt + 2.0 * g_tphi * beta + g_phiphi * beta * beta;
+        BhKleinSum<double> norm2_sum;
+        norm2_sum.add(g_tt);
+        norm2_sum.add(2.0 * g_tphi * beta);
+        norm2_sum.add(g_phiphi * beta * beta);
+        double norm2 = norm2_sum.result();
         double inv = rsqrt(fmax(BH_EPS_D, fabs(norm2)));
         ephi_t = inv;
         ephi_phi = beta * inv;
@@ -809,12 +843,19 @@ __device__ inline double doppler_g_general_d(const GeodesicStateD& st, double M,
     double r_over_M = r / M_safe;
     double Omega = 1.0 / (a / M_safe + pow(fmax(1.0, r_over_M), 1.5)) / M_safe;
 
-    double denom = -(g_tt + 2.0 * g_tphi * Omega + g_phiphi * Omega * Omega);
+    BhKleinSum<double> denom_sum;
+    denom_sum.add(g_tt);
+    denom_sum.add(2.0 * g_tphi * Omega);
+    denom_sum.add(g_phiphi * Omega * Omega);
+    double denom = -denom_sum.result();
     double u_t = rsqrt(denom > 1e-24 ? denom : 1e-24);
     double u_phi = Omega * u_t;
 
     double E_inf = -st.pt;
-    double k_u = -(st.pt * u_t + st.pphi * u_phi);
+    BhKleinSum<double> k_u_sum;
+    k_u_sum.add(st.pt * u_t);
+    k_u_sum.add(st.pphi * u_phi);
+    double k_u = -k_u_sum.result();
     double g = E_inf / (k_u > 1e-18 ? k_u : 1e-18);
 
     return g > 0.0 ? g : 0.0;
@@ -975,14 +1016,14 @@ __device__ inline bool rk4_step_d(const GeodesicStateD& s, double M, double a, d
 
     double h6 = h / 6.0;
     s_out = st;
-    s_out.t += h6 * (k1.t + 2*k2.t + 2*k3.t + k4.t);
-    s_out.r += h6 * (k1.r + 2*k2.r + 2*k3.r + k4.r);
-    s_out.theta += h6 * (k1.theta + 2*k2.theta + 2*k3.theta + k4.theta);
-    s_out.phi += h6 * (k1.phi + 2*k2.phi + 2*k3.phi + k4.phi);
-    s_out.pt += h6 * (k1.pt + 2*k2.pt + 2*k3.pt + k4.pt);
-    s_out.pr += h6 * (k1.pr + 2*k2.pr + 2*k3.pr + k4.pr);
-    s_out.ptheta += h6 * (k1.ptheta + 2*k2.ptheta + 2*k3.ptheta + k4.ptheta);
-    s_out.pphi += h6 * (k1.pphi + 2*k2.pphi + 2*k3.pphi + k4.pphi);
+    s_out.t += h6 * bh_rk4_sum(k1.t, k2.t, k3.t, k4.t);
+    s_out.r += h6 * bh_rk4_sum(k1.r, k2.r, k3.r, k4.r);
+    s_out.theta += h6 * bh_rk4_sum(k1.theta, k2.theta, k3.theta, k4.theta);
+    s_out.phi += h6 * bh_rk4_sum(k1.phi, k2.phi, k3.phi, k4.phi);
+    s_out.pt += h6 * bh_rk4_sum(k1.pt, k2.pt, k3.pt, k4.pt);
+    s_out.pr += h6 * bh_rk4_sum(k1.pr, k2.pr, k3.pr, k4.pr);
+    s_out.ptheta += h6 * bh_rk4_sum(k1.ptheta, k2.ptheta, k3.ptheta, k4.ptheta);
+    s_out.pphi += h6 * bh_rk4_sum(k1.pphi, k2.pphi, k3.pphi, k4.pphi);
 
     double disc = M*M - a*a;
     if (disc < 0.0) disc = 0.0;

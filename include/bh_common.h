@@ -366,6 +366,20 @@ enum class RayStatus : int {
  */
 
 /**
+ * @brief Absolute value for float.
+ */
+__host__ __device__ inline float bh_abs(float x) {
+    return fabsf(x);
+}
+
+/**
+ * @brief Absolute value for double.
+ */
+__host__ __device__ inline double bh_abs(double x) {
+    return fabs(x);
+}
+
+/**
  * @brief Clamp a value to a specified range.
  *
  * @param x Value to clamp.
@@ -421,6 +435,61 @@ __host__ __device__ inline float bh_safe_sin2(float theta) {
 __host__ __device__ inline float bh_safe_div(float num, float den, float eps = BH_EPS) {
     float d = (fabsf(den) < eps) ? copysignf(eps, den) : den;
     return num / d;
+}
+
+/* ============================================================================
+ * COMPENSATED SUMMATION
+ * ============================================================================
+ */
+
+/**
+ * @brief Iterative Kahan-Babuska (Klein) compensated summation.
+ *
+ * Tracks first- and second-order compensation terms to reduce cancellation
+ * in mixed-sign sums without resorting to double precision.
+ */
+template <typename Real>
+struct BhKleinSum {
+    Real sum;
+    Real cs;
+    Real ccs;
+
+    __host__ __device__ inline BhKleinSum() : sum(Real(0)), cs(Real(0)), ccs(Real(0)) {}
+
+    __host__ __device__ inline void add(Real x) {
+        Real t = sum + x;
+        Real c;
+        if (bh_abs(sum) >= bh_abs(x)) {
+            c = (sum - t) + x;
+        } else {
+            c = (x - t) + sum;
+        }
+        sum = t;
+
+        t = cs + c;
+        Real cc;
+        if (bh_abs(cs) >= bh_abs(c)) {
+            cc = (cs - t) + c;
+        } else {
+            cc = (c - t) + cs;
+        }
+        cs = t;
+        ccs += cc;
+    }
+
+    __host__ __device__ inline Real result() const {
+        return sum + cs + ccs;
+    }
+};
+
+template <typename Real>
+__host__ __device__ inline Real bh_rk4_sum(Real k1, Real k2, Real k3, Real k4) {
+    BhKleinSum<Real> sum;
+    sum.add(k1);
+    sum.add(Real(2) * k2);
+    sum.add(Real(2) * k3);
+    sum.add(k4);
+    return sum.result();
 }
 
 #endif // BH_COMMON_H

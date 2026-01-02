@@ -1,7 +1,10 @@
-// Numerical self-test for analytic Kerr contravariant metric derivatives
-// Compares kerr_blocks_contra_derivs (analytic) vs. 5-point finite differences
-// across random (r, theta) samples for spins a/M in {0, 0.5, 0.9}.
-// Host-only test: uses __host__ paths from bh_kerr.h (no GPU required).
+// Numerical self-test for analytic Kerr contravariant metric derivatives.
+// Compares kerr_blocks_contra_derivs_d (analytic) vs. 5-point finite differences
+// of kerr_blocks_contra_d across random (r, theta) samples for spins a/M in
+// {0, 0.5, 0.9}.
+//
+// Note: we use double precision for the finite-difference reference to avoid
+// float-precision cancellation dominating theta-derivative checks.
 
 #include <cstdio>
 #include <cstdlib>
@@ -27,42 +30,41 @@ static inline double rel_err(double a, double b) {
 static void fd_derivs(double M, double a, double r, double th, double hr, double hth,
                       double &gtt_r, double &gtphi_r, double &gphiphi_r, double &grr_r, double &gthth_r,
                       double &gtt_th, double &gtphi_th, double &gphiphi_th, double &grr_th, double &gthth_th) {
-    // r-derivatives via 5-point stencil
+    // 5-point stencil: f'(x) ≈ (-f(x+2h) + 8f(x+h) - 8f(x-h) + f(x-2h)) / (12h)
     auto eval = [&](double rr, double tt, double &gtt, double &gtphi, double &gphiphi, double &grr, double &gthth){
-        float gtt_f, gtphi_f, gphiphi_f, grr_f, gthth_f;
-        kerr_blocks_contra((float)M, (float)a, (float)rr, (float)tt, gtt_f, gtphi_f, gphiphi_f, grr_f, gthth_f);
-        gtt = gtt_f; gtphi = gtphi_f; gphiphi = gphiphi_f; grr = grr_f; gthth = gthth_f;
+        kerr_blocks_contra_d(M, a, rr, tt, gtt, gtphi, gphiphi, grr, gthth);
     };
     double gtt_p2, gtphi_p2, gphiphi_p2, grr_p2, gthth_p2;
     double gtt_p1, gtphi_p1, gphiphi_p1, grr_p1, gthth_p1;
     double gtt_m1, gtphi_m1, gphiphi_m1, grr_m1, gthth_m1;
     double gtt_m2, gtphi_m2, gphiphi_m2, grr_m2, gthth_m2;
 
+    // r-derivatives
     eval(r+2*hr, th, gtt_p2, gtphi_p2, gphiphi_p2, grr_p2, gthth_p2);
     eval(r+1*hr, th, gtt_p1, gtphi_p1, gphiphi_p1, grr_p1, gthth_p1);
     eval(r-1*hr, th, gtt_m1, gtphi_m1, gphiphi_m1, grr_m1, gthth_m1);
     eval(r-2*hr, th, gtt_m2, gtphi_m2, gphiphi_m2, grr_m2, gthth_m2);
 
-    auto fd = [&](double f_p2, double f_p1, double f_m1, double f_m2){
-        return (-f_p2 + 8.0*f_p1 - 8.0*f_m1 + f_m2) / (12.0*hr);
+    auto fd5 = [](double f_p2, double f_p1, double f_m1, double f_m2, double h){
+        return (-f_p2 + 8.0*f_p1 - 8.0*f_m1 + f_m2) / (12.0*h);
     };
-    gtt_r     = fd(gtt_p2,    gtt_p1,    gtt_m1,    gtt_m2);
-    gtphi_r   = fd(gtphi_p2,  gtphi_p1,  gtphi_m1,  gtphi_m2);
-    gphiphi_r = fd(gphiphi_p2,gphiphi_p1,gphiphi_m1,gphiphi_m2);
-    grr_r     = fd(grr_p2,    grr_p1,    grr_m1,    grr_m2);
-    gthth_r   = fd(gthth_p2,  gthth_p1,  gthth_m1,  gthth_m2);
+    gtt_r     = fd5(gtt_p2,    gtt_p1,    gtt_m1,    gtt_m2, hr);
+    gtphi_r   = fd5(gtphi_p2,  gtphi_p1,  gtphi_m1,  gtphi_m2, hr);
+    gphiphi_r = fd5(gphiphi_p2,gphiphi_p1,gphiphi_m1,gphiphi_m2, hr);
+    grr_r     = fd5(grr_p2,    grr_p1,    grr_m1,    grr_m2, hr);
+    gthth_r   = fd5(gthth_p2,  gthth_p1,  gthth_m1,  gthth_m2, hr);
 
-    // theta-derivatives via 5-point stencil
+    // theta-derivatives
     eval(r, th+2*hth, gtt_p2, gtphi_p2, gphiphi_p2, grr_p2, gthth_p2);
     eval(r, th+1*hth, gtt_p1, gtphi_p1, gphiphi_p1, grr_p1, gthth_p1);
     eval(r, th-1*hth, gtt_m1, gtphi_m1, gphiphi_m1, grr_m1, gthth_m1);
     eval(r, th-2*hth, gtt_m2, gtphi_m2, gphiphi_m2, grr_m2, gthth_m2);
 
-    gtt_th     = fd(gtt_p2,    gtt_p1,    gtt_m1,    gtt_m2);
-    gtphi_th   = fd(gtphi_p2,  gtphi_p1,  gtphi_m1,  gtphi_m2);
-    gphiphi_th = fd(gphiphi_p2,gphiphi_p1,gphiphi_m1,gphiphi_m2);
-    grr_th     = fd(grr_p2,    grr_p1,    grr_m1,    grr_m2);
-    gthth_th   = fd(gthth_p2,  gthth_p1,  gthth_m1,  gthth_m2);
+    gtt_th     = fd5(gtt_p2,    gtt_p1,    gtt_m1,    gtt_m2, hth);
+    gtphi_th   = fd5(gtphi_p2,  gtphi_p1,  gtphi_m1,  gtphi_m2, hth);
+    gphiphi_th = fd5(gphiphi_p2,gphiphi_p1,gphiphi_m1,gphiphi_m2, hth);
+    grr_th     = fd5(grr_p2,    grr_p1,    grr_m1,    grr_m2, hth);
+    gthth_th   = fd5(gthth_p2,  gthth_p1,  gthth_m1,  gthth_m2, hth);
 }
 
 static RelErrStats run_suite(double M, double a, int samples, double tol, double abs_tol, unsigned seed) {
@@ -90,11 +92,11 @@ static RelErrStats run_suite(double M, double a, int samples, double tol, double
         if (th - 2*hth <= 0.0)   th = 2.5*hth;
 
         // Analytic
-        float gtt_r_a, gtphi_r_a, gphiphi_r_a, grr_r_a, gthth_r_a;
-        float gtt_th_a, gtphi_th_a, gphiphi_th_a, grr_th_a, gthth_th_a;
-        kerr_blocks_contra_derivs((float)M, (float)a, (float)r, (float)th,
-                                  gtt_r_a, gtphi_r_a, gphiphi_r_a, grr_r_a, gthth_r_a,
-                                  gtt_th_a, gtphi_th_a, gphiphi_th_a, grr_th_a, gthth_th_a);
+        double gtt_r_a, gtphi_r_a, gphiphi_r_a, grr_r_a, gthth_r_a;
+        double gtt_th_a, gtphi_th_a, gphiphi_th_a, grr_th_a, gthth_th_a;
+        kerr_blocks_contra_derivs_d(M, a, r, th,
+                                    gtt_r_a, gtphi_r_a, gphiphi_r_a, grr_r_a, gthth_r_a,
+                                    gtt_th_a, gtphi_th_a, gphiphi_th_a, grr_th_a, gthth_th_a);
 
         // Finite difference
         double gtt_r_f, gtphi_r_f, gphiphi_r_f, grr_r_f, gthth_r_f;
